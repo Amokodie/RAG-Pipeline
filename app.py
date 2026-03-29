@@ -583,8 +583,24 @@ def main() -> None:
                 key="adv_q",
             )
             adv_k = st.slider("Top‑k (comparison)", 1, min(8, len(df)), min(5, len(df)), key="adv_k")
-            alpha = st.slider("Hybrid α (dense weight; 1−α is BM25)", 0.0, 1.0, 0.55, 0.05)
             fusion_mode = st.radio("Fusion", ["weighted", "rrf"], horizontal=True, key="adv_fusion")
+            if fusion_mode == "rrf":
+                st.caption(
+                    "**RRF** merges **rankings** from dense + BM25 (Reciprocal Rank Fusion, k=60). "
+                    "α is **not** used."
+                )
+            else:
+                st.caption("**Weighted:** α·minmax(dense) + (1−α)·minmax(BM25).")
+            alpha = st.slider(
+                "Hybrid α (dense vs BM25 weight)",
+                0.0,
+                1.0,
+                0.55,
+                0.05,
+                key="adv_alpha",
+                disabled=(fusion_mode == "rrf"),
+                help="Ignored when Fusion = RRF.",
+            )
 
             if adv_q.strip():
                 q = adv_q.strip()
@@ -612,14 +628,15 @@ def main() -> None:
                         hide_index=True,
                     )
                 with c3:
-                    st.markdown("##### Hybrid (BM25 + dense)")
+                    hy_title = "##### Hybrid — RRF (BM25 + dense ranks)" if fusion_mode == "rrf" else "##### Hybrid — weighted (BM25 + dense)"
+                    st.markdown(hy_title)
                     st.dataframe(
                         pd.DataFrame(
                             [
                                 {
                                     "rank": i + 1,
                                     "case_id": h.case_id,
-                                    "fused": round(h.fused_score, 4),
+                                    "fused_or_rrf": round(h.fused_score, 4),
                                     "dense": round(h.dense_score, 4),
                                     "bm25": round(h.bm25_score, 4),
                                 }
@@ -630,20 +647,46 @@ def main() -> None:
                         hide_index=True,
                     )
 
-                st.markdown("##### Sentence-level attribution (top hit from hybrid)")
+                st.markdown("##### Sentence-level attribution (top hybrid hit: `user_prompt` vs `model_response`)")
                 top = hy_hits[0] if hy_hits else None
+                llm_context_block = ""
                 if top:
                     row = df.iloc[top.row_index]
-                    doc = f"{row['user_prompt']}\n\n{row['model_response']}"
-                    from attribution import attribute_sentences
+                    from attribution import attribute_prompt_and_response, format_attribution_for_llm_context
 
-                    pairs = attribute_sentences(hybrid.dense.model, q, doc, top_n=5)
-                    for sent, sc in pairs:
-                        st.caption(f"**{sc:.3f}** — {sent[:320]}{'…' if len(sent) > 320 else ''}")
+                    attr_rows = attribute_prompt_and_response(
+                        hybrid.dense.model,
+                        q,
+                        str(row["user_prompt"]),
+                        str(row["model_response"]),
+                        top_n=8,
+                    )
+                    if attr_rows:
+                        st.dataframe(
+                            pd.DataFrame(
+                                [
+                                    {
+                                        "source": ("user_prompt" if r.source == "user_prompt" else "model_response"),
+                                        "similarity": round(r.score, 4),
+                                        "sentence": r.text[:400] + ("…" if len(r.text) > 400 else ""),
+                                    }
+                                    for r in attr_rows
+                                ]
+                            ),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+                        st.caption("Higher similarity = sentence embedding closer to your query (same model as dense retrieval).")
+                        llm_context_block = format_attribution_for_llm_context(attr_rows)
+                    else:
+                        st.caption("No sentences split from this row.")
 
                 st.divider()
-                st.markdown("##### Optional: OpenAI with strict RETRIEVED_CONTEXT")
-                st.caption("Set `OPENAI_API_KEY` in the environment or paste a key below (session only; not stored on disk).")
+                st.markdown("##### Optional OpenAI: strict system prompt + `RETRIEVED_CONTEXT` + instructor notes")
+                st.caption(
+                    "The model receives **only** the block below: audit fields, dataset response excerpt, "
+                    "**instructor_grounded_answer** (preferred correction), and **sentence_attribution_evidence**."
+                )
                 api_key = st.text_input(
                     "OpenAI API key",
                     type="password",
@@ -651,33 +694,41 @@ def main() -> None:
                     key="openai_key",
                 )
                 oa_model = st.text_input("Model", value="gpt-4o-mini", key="oa_model")
+
+                preview_block = ""
+                if hy_hits and top:
+                    rr = df.iloc[top.row_index]
+                    cid = str(rr["case_id"])
+                    excerpt = str(rr["model_response"])[:1200]
+                    grounded = REVISED_RESPONSES.get(cid, "")
+                    from llm_grounding import build_context_block
+
+                    preview_block = build_context_block(
+                        cid,
+                        str(rr["category"]),
+                        str(rr["subcategory"]),
+                        str(rr["user_prompt"]),
+                        excerpt,
+                        grounded,
+                        sentence_attribution_block=llm_context_block if llm_context_block else None,
+                    )
+                    with st.expander("Preview full RETRIEVED_CONTEXT (sent to the API)", expanded=False):
+                        st.code(preview_block, language="text")
+
                 if st.button("Generate grounded answer (strict context only)", key="btn_oa"):
                     if not api_key.strip():
                         st.warning("Add an API key or set OPENAI_API_KEY.")
-                    elif not hy_hits:
+                    elif not hy_hits or not top:
                         st.warning("No hybrid hit to ground on.")
                     else:
-                        from llm_grounding import build_context_block, chat_grounded_answer
+                        from llm_grounding import chat_grounded_answer
 
-                        h0 = hy_hits[0]
-                        rr = df.iloc[h0.row_index]
-                        cid = str(rr["case_id"])
-                        excerpt = str(rr["model_response"])[:1200]
-                        grounded = REVISED_RESPONSES.get(cid, "")
-                        block = build_context_block(
-                            cid,
-                            str(rr["category"]),
-                            str(rr["subcategory"]),
-                            str(rr["user_prompt"]),
-                            excerpt,
-                            grounded,
-                        )
                         try:
                             ans = chat_grounded_answer(
                                 api_key=api_key.strip(),
                                 model=oa_model.strip() or "gpt-4o-mini",
                                 user_query=q,
-                                context_block=block,
+                                context_block=preview_block,
                             )
                             st.success(ans)
                         except Exception as ex:
