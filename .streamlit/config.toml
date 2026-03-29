@@ -1,0 +1,14 @@
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false
+
+# Default = dark (Cloud). In-app Light uses ui_theme.py with the same CSS structure + light palette.
+[theme]
+base = "dark"
+primaryColor = "#38bdf8"
+backgroundColor = "#0c1118"
+secondaryBackgroundColor = "#0f1419"
+textColor = "#e5e7eb"
+font = "sans serif"
