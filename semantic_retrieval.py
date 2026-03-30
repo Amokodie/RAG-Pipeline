@@ -9,7 +9,9 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 import torch
-from sentence_transformers import SentenceTransformer, util
+from sentence_transformers import util
+
+from hf_hub_config import configure_hf_hub, load_sentence_transformer
 
 
 @dataclass
@@ -30,25 +32,43 @@ def build_index_text(df: pd.DataFrame) -> list[str]:
 class SemanticRetriever:
     def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
         self._model_name = model_name
-        self._model: SentenceTransformer | None = None
+        self._model = None
         self._embeddings: torch.Tensor | None = None
         self._df: pd.DataFrame | None = None
+        self._load_error: str | None = None
 
     @property
-    def model(self) -> SentenceTransformer:
+    def available(self) -> bool:
+        return self._model is not None and self._embeddings is not None
+
+    @property
+    def load_error(self) -> str | None:
+        return self._load_error
+
+    @property
+    def model(self):
         if self._model is None:
-            raise RuntimeError("SemanticRetriever not fitted.")
+            raise RuntimeError(
+                "SentenceTransformer not loaded. Check network / Hugging Face access, or set HF_ENDPOINT mirror."
+            )
         return self._model
 
     def fit(self, df: pd.DataFrame, index_texts: list[str]) -> None:
         self._df = df.reset_index(drop=True)
-        self._model = SentenceTransformer(self._model_name)
-        self._embeddings = self._model.encode(
-            index_texts,
-            convert_to_tensor=True,
-            normalize_embeddings=True,
-            show_progress_bar=False,
-        )
+        self._load_error = None
+        configure_hf_hub()
+        try:
+            self._model = load_sentence_transformer(self._model_name)
+            self._embeddings = self._model.encode(
+                index_texts,
+                convert_to_tensor=True,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )
+        except Exception as e:
+            self._model = None
+            self._embeddings = None
+            self._load_error = f"{type(e).__name__}: {e}"
 
     def similarity_distribution(self, query: str) -> np.ndarray:
         """Dense cosine similarity vs every chunk (same order as fitted dataframe rows)."""
@@ -81,5 +101,6 @@ class SemanticRetriever:
         return out
 
 
-def load_model(model_name: str = "all-MiniLM-L6-v2") -> SentenceTransformer:
-    return SentenceTransformer(model_name)
+def load_model(model_name: str = "all-MiniLM-L6-v2"):
+    configure_hf_hub()
+    return load_sentence_transformer(model_name)

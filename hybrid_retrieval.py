@@ -64,6 +64,7 @@ class HybridRetriever:
         self._dense = SemanticRetriever(model_name)
         self._bm25: BM25Okapi | None = None
         self._df: pd.DataFrame | None = None
+        self._dense_is_bm25_fallback: bool = False
 
     @property
     def dense(self) -> SemanticRetriever:
@@ -72,6 +73,7 @@ class HybridRetriever:
     def fit(self, df: pd.DataFrame, corpus_texts: list[str]) -> None:
         self._df = df.reset_index(drop=True)
         self._dense.fit(self._df, corpus_texts)
+        self._dense_is_bm25_fallback = not self._dense.available
         tokenized = [simple_tokenize(t) for t in corpus_texts]
         # rank_bm25 tolerates empty docs if we add a dummy token
         tokenized = [t if t else ["empty"] for t in tokenized]
@@ -86,7 +88,14 @@ class HybridRetriever:
         return np.array(self._bm25.get_scores(q), dtype=np.float64)
 
     def dense_distribution(self, query: str) -> np.ndarray:
-        return self._dense.similarity_distribution(query)
+        d = self._dense.similarity_distribution(query)
+        if d.size > 0:
+            return d
+        # SentenceTransformer failed (network timeout, etc.): use BM25 as the dense signal so hybrid still runs
+        if self._bm25 is not None:
+            b = self.bm25_distribution(query)
+            return _minmax(b)
+        return np.array([])
 
     def fused_distribution(self, query: str, alpha: float, mode: str = "weighted") -> np.ndarray:
         d = self.dense_distribution(query)
@@ -113,7 +122,7 @@ class HybridRetriever:
             return []
         d = self.dense_distribution(query)
         b = self.bm25_distribution(query)
-        if d.size == 0:
+        if d.size == 0 or b.size == 0:
             return []
         if fusion == "rrf":
             fused = self.fused_distribution(query, alpha, mode="rrf")

@@ -34,7 +34,9 @@ from visualization import (
     figure_similarity_heatmap,
     figure_softmax_mass,
 )
+from audit_chat import offline_markdown_answer, openai_conversational_answer, retrieve_best_case
 from grounded_responses import REVISED_RESPONSES
+from llm_grounding import build_context_block
 
 # Short pedagogical notes: what failed, how retrieval + policy text mitigates it
 CASE_ANALYSIS: dict[str, dict[str, str]] = {
@@ -161,6 +163,137 @@ def rag_prompt_template(case_id: str, category: str, subcategory: str, user_prom
     )
 
 
+def _render_ask_ai_tab(df: pd.DataFrame, retriever: TfidfRetriever, path_str: str) -> None:
+    """Ask AI UI; failures are caught in main() so other tabs still run."""
+    st.subheader("Ask about this audit")
+    st.markdown(
+        "Ask **natural-language questions** about alignment, safety, honesty, bias, or specific **case IDs** "
+        "(H01, O01, …). Each turn **retrieves** the closest CSV row—**hybrid BM25 + dense** when available, "
+        "otherwise **TF‑IDF**—then answers from **instructor-aligned** notes. Optional **OpenAI** adds a "
+        "conversational tone while staying **grounded** on that row only."
+    )
+
+    if "ask_ai_messages" not in st.session_state:
+        st.session_state.ask_ai_messages = []
+
+    try:
+        hybrid_chat = cached_hybrid(path_str)
+    except Exception:
+        hybrid_chat = None
+
+    if hybrid_chat is not None and (
+        getattr(hybrid_chat, "_dense_is_bm25_fallback", False) or not hybrid_chat.dense.available
+    ):
+        st.info(
+            "Sentence-transformers is **not** loaded (network timeout or missing deps). Retrieval still uses "
+            "**BM25-heavy hybrid**; **sentence attributions** for the API context are skipped until the model loads."
+        )
+
+    _chat_key_default = os.environ.get("OPENAI_API_KEY", "")
+    try:
+        _chat_key_default = st.secrets.get("OPENAI_API_KEY", _chat_key_default)
+    except Exception:
+        pass
+
+    ck1, ck2 = st.columns((3, 1))
+    with ck1:
+        chat_api_key = st.text_input(
+            "OpenAI API key (optional)",
+            type="password",
+            value=_chat_key_default,
+            key="chat_openai_key",
+            help="Leave empty for **offline** answers from grounded notes only.",
+        )
+    with ck2:
+        st.write("")
+        st.write("")
+        if st.button("Clear chat", key="btn_clear_ask_ai"):
+            st.session_state.ask_ai_messages = []
+            st.rerun()
+
+    use_chat_llm = st.checkbox(
+        "Use OpenAI for conversational reply (still grounded on the retrieved row)",
+        value=False,
+        key="ask_ai_use_llm",
+    )
+    chat_model = st.text_input(
+        "Model",
+        value="gpt-4o-mini",
+        key="ask_ai_model",
+        disabled=not use_chat_llm,
+    )
+
+    for msg in st.session_state.ask_ai_messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    with st.form("ask_ai_form", clear_on_submit=True):
+        user_q = st.text_input(
+            "Your question",
+            placeholder="e.g. What fails in case O01?  ·  hiring bias examples",
+            label_visibility="collapsed",
+        )
+        submitted = st.form_submit_button("Send")
+
+    if submitted and user_q.strip():
+        prompt = user_q.strip()
+        with st.spinner("Retrieving the best-matching case…"):
+            row_idx, _cid_ret, method = retrieve_best_case(df, retriever, hybrid_chat, prompt)
+            row = df.iloc[row_idx]
+            cid = str(row["case_id"])
+            grounded = REVISED_RESPONSES.get(cid, "—")
+            excerpt = str(row["model_response"])[:1200]
+            attr_block = ""
+            if hybrid_chat is not None and hybrid_chat.dense.available:
+                try:
+                    from attribution import attribute_prompt_and_response, format_attribution_for_llm_context
+
+                    attr_rows = attribute_prompt_and_response(
+                        hybrid_chat.dense.model,
+                        prompt.strip(),
+                        str(row["user_prompt"]),
+                        str(row["model_response"]),
+                        top_n=8,
+                    )
+                    if attr_rows:
+                        attr_block = format_attribution_for_llm_context(attr_rows)
+                except Exception:
+                    pass
+
+            ctx = build_context_block(
+                cid,
+                str(row["category"]),
+                str(row["subcategory"]),
+                str(row["user_prompt"]),
+                excerpt,
+                grounded,
+                sentence_attribution_block=attr_block if attr_block else None,
+            )
+
+        if use_chat_llm and chat_api_key.strip():
+            try:
+                with st.spinner("Generating grounded reply…"):
+                    reply = openai_conversational_answer(
+                        api_key=chat_api_key.strip(),
+                        model=chat_model.strip() or "gpt-4o-mini",
+                        user_query=prompt,
+                        context_block=ctx,
+                    )
+            except Exception as ex:
+                reply = (
+                    f"**OpenAI error:** `{ex}`\n\n---\n\n"
+                    + offline_markdown_answer(df, row_idx, cid, grounded, method)
+                )
+        else:
+            reply = offline_markdown_answer(df, row_idx, cid, grounded, method)
+            if use_chat_llm and not chat_api_key.strip():
+                reply += "\n\n*Enable OpenAI by adding an API key above.*"
+
+        st.session_state.ask_ai_messages.append({"role": "user", "content": prompt})
+        st.session_state.ask_ai_messages.append({"role": "assistant", "content": reply})
+        st.rerun()
+
+
 def main() -> None:
     st.set_page_config(
         page_title="RAG Concept Demo — Alignment Audit",
@@ -226,6 +359,7 @@ def main() -> None:
             f"(cap {stats['max_features_cap']}) · `{data_path.name}`"
         )
         st.markdown(
+            "**Ask AI tab:** chat-style Q&A over the audit (retrieval + grounded notes; optional OpenAI). "
             "**Analysis tab:** LSA + heatmaps. **Advanced tab:** sentence-transformers, **BM25+dense** fusion, "
             "**sentence attributions**, optional **OpenAI** strict grounding."
         )
@@ -243,12 +377,13 @@ def main() -> None:
         "flow is the same: **retrieve → condition → generate**."
     )
 
-    tab_overview, tab_analysis, tab_case, tab_live, tab_advanced, tab_concepts = st.tabs(
+    tab_overview, tab_analysis, tab_case, tab_live, tab_ask_ai, tab_advanced, tab_concepts = st.tabs(
         [
             "Overview & corpus",
             "Analysis & 3D embedding",
             "Case lab (failure vs RAG)",
             "Live retrieval inspector",
+            "Ask AI",
             "Advanced: hybrid + LLM",
             "Concepts & checklist",
         ]
@@ -557,6 +692,14 @@ def main() -> None:
         else:
             st.info("Enter a query to see TF‑IDF terms, the full similarity bar chart, and top‑k chunks.")
 
+    # ----- Ask AI: conversational Q&A (retrieval + grounded notes; optional OpenAI) -----
+    with tab_ask_ai:
+        try:
+            _render_ask_ai_tab(df, retriever, path_str)
+        except Exception as ex:
+            st.error(f"Ask AI tab error: {ex}")
+            st.caption("Try reloading the page. If this persists, check the terminal log.")
+
     # ----- Advanced: semantic + hybrid + attribution + LLM -----
     with tab_advanced:
         st.subheader("Optional upgrades: dense retrieval, hybrid fusion, attributions, API grounding")
@@ -572,11 +715,19 @@ def main() -> None:
         except Exception as e:
             hybrid = None
             st.error(
-                f"Could not initialize hybrid / semantic stack ({e}). "
-                "Install: `pip install sentence-transformers torch rank-bm25` and restart."
+                f"Could not initialize hybrid stack ({e}). "
+                "Install: `pip install sentence-transformers torch rank-bm25`."
             )
 
         if hybrid is not None:
+            if getattr(hybrid, "_dense_is_bm25_fallback", False) or not hybrid.dense.available:
+                st.warning(
+                    "**Sentence-transformers could not load** (often a **network timeout** to Hugging Face — "
+                    "WinError 10060). Hybrid tab still runs using **BM25 for both lexical and ‘dense’ columns** "
+                    "(degenerate fusion). **Attribution** and **OpenAI** need the embedding model — fix network, "
+                    "use a VPN, or set a mirror before starting Streamlit, e.g.  \n"
+                    "`$env:HF_ENDPOINT = \"https://hf-mirror.com\"` (PowerShell) then restart the app."
+                )
             adv_q = st.text_input(
                 "Query (try paraphrases vs Live tab)",
                 placeholder="e.g. Was the Constitutional AI paper published in Nature?  ·  hiring without stereotypes",
@@ -602,8 +753,14 @@ def main() -> None:
                 help="Ignored when Fusion = RRF.",
             )
 
-            if adv_q.strip():
-                q = adv_q.strip()
+            q = adv_q.strip()
+            tf_hits: list = []
+            den_hits: list = []
+            hy_hits: list = []
+            top = None
+            llm_context_block = ""
+
+            if q:
                 tf_hits = retriever.query(q, top_k=adv_k)
                 den_hits = hybrid.dense.search(q, top_k=adv_k)
                 hy_hits = hybrid.search(q, top_k=adv_k, alpha=alpha, fusion=fusion_mode)
@@ -649,90 +806,122 @@ def main() -> None:
 
                 st.markdown("##### Sentence-level attribution (top hybrid hit: `user_prompt` vs `model_response`)")
                 top = hy_hits[0] if hy_hits else None
-                llm_context_block = ""
                 if top:
                     row = df.iloc[top.row_index]
-                    from attribution import attribute_prompt_and_response, format_attribution_for_llm_context
+                    if hybrid.dense.available:
+                        from attribution import attribute_prompt_and_response, format_attribution_for_llm_context
 
-                    attr_rows = attribute_prompt_and_response(
-                        hybrid.dense.model,
-                        q,
-                        str(row["user_prompt"]),
-                        str(row["model_response"]),
-                        top_n=8,
-                    )
-                    if attr_rows:
-                        st.dataframe(
-                            pd.DataFrame(
-                                [
-                                    {
-                                        "source": ("user_prompt" if r.source == "user_prompt" else "model_response"),
-                                        "similarity": round(r.score, 4),
-                                        "sentence": r.text[:400] + ("…" if len(r.text) > 400 else ""),
-                                    }
-                                    for r in attr_rows
-                                ]
-                            ),
-                            use_container_width=True,
-                            hide_index=True,
+                        attr_rows = attribute_prompt_and_response(
+                            hybrid.dense.model,
+                            q,
+                            str(row["user_prompt"]),
+                            str(row["model_response"]),
+                            top_n=8,
                         )
-                        st.caption("Higher similarity = sentence embedding closer to your query (same model as dense retrieval).")
-                        llm_context_block = format_attribution_for_llm_context(attr_rows)
-                    else:
-                        st.caption("No sentences split from this row.")
-
-                st.divider()
-                st.markdown("##### Optional OpenAI: strict system prompt + `RETRIEVED_CONTEXT` + instructor notes")
-                st.caption(
-                    "The model receives **only** the block below: audit fields, dataset response excerpt, "
-                    "**instructor_grounded_answer** (preferred correction), and **sentence_attribution_evidence**."
-                )
-                api_key = st.text_input(
-                    "OpenAI API key",
-                    type="password",
-                    value=os.environ.get("OPENAI_API_KEY", ""),
-                    key="openai_key",
-                )
-                oa_model = st.text_input("Model", value="gpt-4o-mini", key="oa_model")
-
-                preview_block = ""
-                if hy_hits and top:
-                    rr = df.iloc[top.row_index]
-                    cid = str(rr["case_id"])
-                    excerpt = str(rr["model_response"])[:1200]
-                    grounded = REVISED_RESPONSES.get(cid, "")
-                    from llm_grounding import build_context_block
-
-                    preview_block = build_context_block(
-                        cid,
-                        str(rr["category"]),
-                        str(rr["subcategory"]),
-                        str(rr["user_prompt"]),
-                        excerpt,
-                        grounded,
-                        sentence_attribution_block=llm_context_block if llm_context_block else None,
-                    )
-                    with st.expander("Preview full RETRIEVED_CONTEXT (sent to the API)", expanded=False):
-                        st.code(preview_block, language="text")
-
-                if st.button("Generate grounded answer (strict context only)", key="btn_oa"):
-                    if not api_key.strip():
-                        st.warning("Add an API key or set OPENAI_API_KEY.")
-                    elif not hy_hits or not top:
-                        st.warning("No hybrid hit to ground on.")
-                    else:
-                        from llm_grounding import chat_grounded_answer
-
-                        try:
-                            ans = chat_grounded_answer(
-                                api_key=api_key.strip(),
-                                model=oa_model.strip() or "gpt-4o-mini",
-                                user_query=q,
-                                context_block=preview_block,
+                        if attr_rows:
+                            st.dataframe(
+                                pd.DataFrame(
+                                    [
+                                        {
+                                            "source": ("user_prompt" if r.source == "user_prompt" else "model_response"),
+                                            "similarity": round(r.score, 4),
+                                            "sentence": r.text[:400] + ("…" if len(r.text) > 400 else ""),
+                                        }
+                                        for r in attr_rows
+                                    ]
+                                ),
+                                use_container_width=True,
+                                hide_index=True,
                             )
-                            st.success(ans)
-                        except Exception as ex:
-                            st.error(str(ex))
+                            st.caption("Higher similarity = sentence embedding closer to your query (same model as dense retrieval).")
+                            llm_context_block = format_attribution_for_llm_context(attr_rows)
+                        else:
+                            st.caption("No sentences split from this row.")
+                    else:
+                        st.info(
+                            "Sentence attributions require **sentence-transformers** to load. "
+                            "After the model downloads successfully, restart the app and return here."
+                        )
+            else:
+                st.info("Enter a **query** above to compare TF‑IDF, dense semantic, and hybrid rankings.")
+
+            st.divider()
+            st.markdown("##### Optional OpenAI: strict system prompt + `RETRIEVED_CONTEXT` + instructor notes")
+            st.caption(
+                "The model receives **only** the block below: audit fields, dataset response excerpt, "
+                "**instructor_grounded_answer** (preferred correction), and **sentence_attribution_evidence**."
+            )
+            api_key = st.text_input(
+                "OpenAI API key",
+                type="password",
+                value=os.environ.get("OPENAI_API_KEY", ""),
+                key="openai_key",
+            )
+            oa_model = st.text_input("Model", value="gpt-4o-mini", key="oa_model")
+
+            preview_block = ""
+            if q and hy_hits and top:
+                rr = df.iloc[top.row_index]
+                cid = str(rr["case_id"])
+                excerpt = str(rr["model_response"])[:1200]
+                grounded = REVISED_RESPONSES.get(cid, "")
+                preview_block = build_context_block(
+                    cid,
+                    str(rr["category"]),
+                    str(rr["subcategory"]),
+                    str(rr["user_prompt"]),
+                    excerpt,
+                    grounded,
+                    sentence_attribution_block=llm_context_block if llm_context_block else None,
+                )
+                with st.expander("Preview full RETRIEVED_CONTEXT (sent to the API)", expanded=False):
+                    st.code(preview_block, language="text")
+            elif not q:
+                st.caption("Type a query above to build **RETRIEVED_CONTEXT** from the top hybrid hit.")
+            else:
+                st.caption("No hybrid hits for this query — adjust wording or top‑k.")
+
+            if st.button("Generate grounded answer (strict context only)", key="btn_oa"):
+                if not q:
+                    st.warning("Enter a query first (above).")
+                elif not api_key.strip():
+                    st.warning("Add an API key or set OPENAI_API_KEY.")
+                elif not hy_hits or not top:
+                    st.warning("No hybrid hit to ground on.")
+                else:
+                    from llm_grounding import chat_grounded_answer
+
+                    try:
+                        ans = chat_grounded_answer(
+                            api_key=api_key.strip(),
+                            model=oa_model.strip() or "gpt-4o-mini",
+                            user_query=q,
+                            context_block=preview_block,
+                        )
+                        st.success(ans)
+                    except Exception as ex:
+                        st.error(str(ex))
+        else:
+            st.info(
+                "**Hybrid retriever could not load.** You can still inspect **TF‑IDF** retrieval here. "
+                "Install `sentence-transformers`, `torch`, and `rank-bm25`, or fix import/network errors, then restart."
+            )
+            adv_q_fb = st.text_input(
+                "Query (TF‑IDF only)",
+                placeholder="e.g. Nature citation, RLHF, hiring bias…",
+                key="adv_q_fb",
+            )
+            adv_k_fb = st.slider("Top‑k", 1, min(8, len(df)), min(5, len(df)), key="adv_k_fb")
+            if adv_q_fb.strip():
+                qfb = adv_q_fb.strip()
+                tf_only = retriever.query(qfb, top_k=adv_k_fb)
+                st.dataframe(
+                    pd.DataFrame(
+                        [{"rank": i + 1, "case_id": h.case_id, "score": round(h.score, 4)} for i, h in enumerate(tf_only)]
+                    ),
+                    use_container_width=True,
+                    hide_index=True,
+                )
 
     # ----- Concepts -----
     with tab_concepts:
@@ -740,7 +929,7 @@ def main() -> None:
         st.markdown(
             "| Failure mode | Symptom in audit | RAG-style mitigation |\n"
             "|---|---|---|\n"
-            "| **Hallucinated provenance** | O01 invents *Nature* | Inject **real** bibliographic chunks or require “unknown” |\n"
+            "| **Hallucinated provenance** | O01 invents *Nature* | Inject **real** bibliographic chunks or require saying \"unknown\" |\n"
             "| **Factual drift** | H02 misstates RLHF/DPO | Retrieve **methods** definitions and comparisons |\n"
             "| **Sycophancy** | H04 agrees with false premise | Retrieve **alignment definitions** (base vs aligned) |\n"
             "| **Harmful compliance** | S01 writes phishing | Retrieve **safety policy** + refusal templates |\n"
@@ -757,6 +946,7 @@ def main() -> None:
         )
         st.subheader("Optional upgrades (implemented)")
         st.markdown(
+            "- **Ask AI** tab: chat-style Q&A with retrieval + grounded notes; optional OpenAI.\n"
             "- **Semantic retrieval** + **hybrid BM25+dense** + **RRF** — see tab **Advanced: hybrid + LLM**.\n"
             "- **Sentence attributions** on the retrieved row (prompt + `model_response`).\n"
             "- **OpenAI** optional: strict system prompt; answers only from `RETRIEVED_CONTEXT` + instructor notes."
