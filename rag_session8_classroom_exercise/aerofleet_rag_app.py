@@ -11,6 +11,8 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from rag_media import render_rag_explainer_block
+
 from aerofleet_pipeline import (
     AeroFleetIndex,
     apply_authority_filter,
@@ -96,19 +98,6 @@ def build_faiss_index():
     return idx
 
 
-def _resolve_explainer_video() -> Path | None:
-    """Same folder, assets/, or project root — supports common export filenames."""
-    base = Path(__file__).resolve().parent
-    root = base.parent
-    names = ("rag_explainer.mp4", "RAG_Stops_AI_Hallucinations.mp4")
-    for name in names:
-        for folder in (base, base / "assets", root, root / "assets"):
-            p = folder / name
-            if p.is_file():
-                return p
-    return None
-
-
 def main() -> None:
     st.set_page_config(
         page_title="AeroFleet X200 | BCU Technical Databank",
@@ -116,25 +105,22 @@ def main() -> None:
         layout="wide",
     )
 
-    st.header("How this RAG Pipeline Prevents Hallucinations")
-    vid = _resolve_explainer_video()
-    if vid is not None:
-        st.video(str(vid))
-        st.caption(
+    _base = Path(__file__).resolve().parent
+    _root = _base.parent
+    render_rag_explainer_block(
+        _base,
+        _root,
+        caption=(
             "This explainer supports the Assignment 3 **RAG concept demo**: **Index → Retrieve → Generate** — "
             "documents are chunked and embedded so retrieval supplies **grounded** context, shrinking reliance on the "
             "model’s parametric memory alone (the **knowledge boundary** problem)."
-        )
-    else:
-        st.info(
-            "Place **`rag_explainer.mp4`** in this folder, under **`assets/`**, or at the **project root** "
-            "as **`RAG_Stops_AI_Hallucinations.mp4`** to show the overview video here."
-        )
-        st.caption(
-            "**Index → Retrieve → Generate:** chunking + vector search retrieve manual passages before generation, "
-            "reducing unsupported guesses vs using the LLM alone."
-        )
-    st.divider()
+        ),
+        missing_hint=(
+            "No explainer MP4 found. Add **`rag_explainer.mp4`** here, under **`assets/`**, or at the **repo root** "
+            "as **`RAG_Stops_AI_Hallucinations.mp4`**. On **Streamlit Cloud**, set **`RAG_EXPLAINER_VIDEO_URL`** to a "
+            "direct **MP4** link."
+        ),
+    )
 
     st.title("AeroFleet X200 — Battery Cooling Technical Databank")
     st.caption(
