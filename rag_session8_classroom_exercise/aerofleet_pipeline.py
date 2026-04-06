@@ -134,6 +134,68 @@ class AeroFleetIndex:
         return out
 
 
+def is_charging_safety_query(query: str) -> bool:
+    """
+    Smoke / odor / vapor during charging → prioritize D07 (Emergency Safety Protocol).
+    Requires both a symptom cue and a charging/battery context cue.
+    """
+    low = query.lower()
+    symptom = any(
+        w in low
+        for w in (
+            "smoke",
+            "odor",
+            "vapour",
+            "vapor",
+            "fume",
+            "solvent",
+            "burning smell",
+        )
+    )
+    charging_ctx = any(
+        w in low
+        for w in (
+            "charg",
+            "rack",
+            "battery pack",
+            "pack",
+            "plug",
+            "external charger",
+        )
+    )
+    return symptom and charging_ctx
+
+
+def merge_retrieval_with_safety_priority(
+    index: AeroFleetIndex,
+    query: str,
+    raw_hits: list[tuple[ChunkRecord, float]],
+) -> tuple[list[tuple[ChunkRecord, float]], list[str]]:
+    """
+    If query suggests charging thermal emergency, merge in an augmented search biased toward D07 text.
+    """
+    notes: list[str] = []
+    if not is_charging_safety_query(query):
+        return raw_hits, notes
+
+    aug = (
+        f"{query} AeroFleet X200 emergency safety protocol charging rack thermal event "
+        "isolate disconnect sand containment D07"
+    )
+    extra = index.search(aug, k=12)
+    seen: dict[tuple[str, int], tuple[ChunkRecord, float]] = {}
+    for c, s in raw_hits + extra:
+        key = (c.doc_id, c.chunk_index)
+        if key not in seen or s > seen[key][1]:
+            seen[key] = (c, s)
+    merged = sorted(seen.values(), key=lambda x: -x[1])
+    notes.append(
+        "**Safety guardrail:** Query matched charging/emergency cues — retrieval merged with a D07-focused "
+        "search. Prioritize **D07** procedures before routine maintenance (D02/D06)."
+    )
+    return merged, notes
+
+
 def apply_authority_filter(
     ranked: list[tuple[ChunkRecord, float]],
     *,

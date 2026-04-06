@@ -18,17 +18,33 @@ from aerofleet_pipeline import (
     catalog_path,
     load_all_chunks,
     load_catalog,
+    merge_retrieval_with_safety_priority,
 )
 
-STRICT_SYSTEM = """You are a technical assistant for AeroFleet X200 battery cooling maintenance.
+# AeroFleet Technical Guardrail — strict non-parametric use of D01–D10 only
+AEROFLEET_TECHNICAL_GUARDRAIL = """You are the **AeroFleet X200 Technical Support Engine**. Your sole purpose is to provide maintenance and operational guidance based **exclusively** on the provided technical documentation passages (D01–D10) in CONTEXT below.
 
-Rules:
-- Answer ONLY using the CONTEXT passages below. Each passage is labeled with document id and status.
-- After factual statements, add a citation like [Source: D02] using the document id from the passage header.
-- If the CONTEXT does not contain enough information to answer, reply with exactly:
-  I cannot find this in the technical manual.
-- Never invent service bulletin numbers, dates, or thresholds not present in CONTEXT.
-- If CONTEXT includes both current (D02) and outdated (D03) material, IGNORE any numbers from D03; D02 is the maintenance authority for intervals.
+**Core instruction (anti-hallucination):**
+1. **Strict grounding:** Do **not** use internal knowledge about drones, batteries, or engineering from your pre-training. If the answer is not contained within the CONTEXT passages, state exactly:
+   I am sorry, but the provided technical manuals do not contain information to answer this specific query.
+2. **Authority hierarchy (always respect document status in CONTEXT headers):**
+   - **D02** (Maintenance Manual v2.1) is **CURRENT AUTHORITY** for inspection intervals and maintenance thresholds.
+   - **D03** is **OUTDATED ARCHIVE** — never use D03 to override **D02**; if both appear, ignore superseded numbers and intervals from D03; follow **D02**.
+   - **D08** is **informational only** — it does **not** change inspection intervals, thresholds, or maintenance rules from D02 or service bulletins.
+3. **Synonym mapping:** If the user uses informal language, align terms using **Glossary (D09)** when it appears in CONTEXT (e.g. map phrases like "uneven fan draw" to concepts defined there such as fan current imbalance / Pack-ΔT when CONTEXT supports it).
+4. **Safety first:** If the user mentions smoke, odor, visible vapor/fumes, or similar during charging, **prioritize procedures from D07 (Emergency Safety Protocol)** in CONTEXT before routine maintenance tips.
+
+**Retrieval & response strategy (already applied upstream; reflect in your answer):**
+- Use only the Top passages provided in CONTEXT.
+- If CONTEXT includes superseded D03 material alongside D02, **prioritize D02** for any conflicting numbers.
+- For every factual claim, include the source document id, e.g. [Source: D02] or [Source: D07].
+
+**Output format (use these exact section headings):**
+**Answer:** [Precise technical response grounded only in CONTEXT]
+
+**Citations:** [Comma-separated list of document IDs used, e.g. D02, D06, D09]
+
+**Confidence Level:** [High / Medium / Low — High when passages directly answer the question; Medium when inference from glossary/synonym mapping is needed; Low when CONTEXT is thin or ambiguous]
 """
 
 
@@ -39,11 +55,14 @@ def _llm_answer(api_key: str, model: str, user_query: str, context: str) -> str:
     resp = client.chat.completions.create(
         model=model,
         messages=[
-            {"role": "system", "content": STRICT_SYSTEM + "\n\nCONTEXT:\n" + context},
+            {
+                "role": "system",
+                "content": AEROFLEET_TECHNICAL_GUARDRAIL + "\n\n--- CONTEXT (retrieved passages) ---\n" + context,
+            },
             {"role": "user", "content": user_query},
         ],
-        temperature=0.2,
-        max_tokens=800,
+        temperature=0.15,
+        max_tokens=1000,
     )
     return (resp.choices[0].message.content or "").strip()
 
@@ -73,11 +92,15 @@ def build_faiss_index():
 
 
 def main() -> None:
-    st.set_page_config(page_title="AeroFleet X200 RAG Demo", page_icon="🔋", layout="wide")
-    st.title("AeroFleet X200 — Battery cooling RAG demo")
-    st.markdown(
-        "**Retrieval-Augmented Generation** over the D01–D10 markdown corpus with **FAISS** vector search, "
-        "**authority rules** (D02 overrides D03), and optional **OpenAI** generation."
+    st.set_page_config(
+        page_title="AeroFleet X200 | BCU Technical Databank",
+        page_icon="🔋",
+        layout="wide",
+    )
+    st.title("AeroFleet X200 — Battery Cooling Technical Databank")
+    st.caption(
+        "Manual-grounded RAG assistant · Corpus D01–D10 · FAISS semantic search · Authority-aware (D02/D03/D08) · "
+        "Safety-prioritized retrieval (D07) · Strict technical guardrails when using OpenAI."
     )
 
     try:
@@ -100,6 +123,11 @@ def main() -> None:
             use_container_width=True,
         )
         st.caption(f"Catalog: `{catalog_path().name}` · Chunks use ~{200} words with ~{50}-word overlap.")
+        with st.expander("Technical Guardrail (system prompt)"):
+            st.markdown(
+                "The LLM uses **CONTEXT-only** answers, refusal if missing, **D02>D03**, **D08** non-binding, "
+                "**D09** synonym bridge, **D07** priority when charging + smoke/odor cues fire (retrieval merge)."
+            )
 
     q = st.text_input(
         "Maintenance / operations question",
@@ -111,11 +139,14 @@ def main() -> None:
         query = q.strip()
         with st.spinner("Embedding query + searching FAISS…"):
             raw_hits = index.search(query, k=20)
+            raw_hits, safety_notes = merge_retrieval_with_safety_priority(index, query, raw_hits)
             context_rows, auth_notes = apply_authority_filter(raw_hits, retrieval_k=5, pool_size=20)
             context_block = build_context_for_llm(context_rows)
             trace_display = raw_hits[:3]
 
         st.subheader("1) Answer")
+        for note in safety_notes:
+            st.info(note)
         for note in auth_notes:
             st.warning(note)
 
