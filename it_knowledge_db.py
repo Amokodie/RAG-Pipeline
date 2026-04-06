@@ -7,7 +7,11 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from course_meta_chunks import COURSE_META_DOCUMENTS
 from it_knowledge_seed import IT_DOCUMENTS
+
+# Course FAQ + IT reference chunks (single table)
+ALL_KB_DOCUMENTS: list[tuple[str, str, str, str]] = COURSE_META_DOCUMENTS + IT_DOCUMENTS
 
 
 def knowledge_db_path() -> Path:
@@ -35,10 +39,12 @@ def ensure_database() -> Path:
             "CREATE INDEX IF NOT EXISTS idx_it_docs_category ON it_docs (category)"
         )
         n = conn.execute("SELECT COUNT(*) FROM it_docs").fetchone()[0]
-        if n == 0:
+        expected = len(ALL_KB_DOCUMENTS)
+        if n != expected:
+            conn.execute("DELETE FROM it_docs")
             conn.executemany(
                 "INSERT INTO it_docs (title, category, body, source) VALUES (?,?,?,?)",
-                IT_DOCUMENTS,
+                ALL_KB_DOCUMENTS,
             )
             conn.commit()
     finally:

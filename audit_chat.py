@@ -88,6 +88,60 @@ def _hits_from_kb(kb: Any | None, query: str, top_k: int = 4) -> list:
         return []
 
 
+def is_site_meta_query(q: str) -> bool:
+    """Questions about the app itself, AeroFleet vs Session 7, RAG, or the assistant identity."""
+    low = q.strip().lower()
+    if len(low) < 2:
+        return False
+    needles = (
+        "what is this site",
+        "what is this app",
+        "what is this demo",
+        "what is this about",
+        "aerofleet",
+        "aero fleet",
+        "are you a bot",
+        "are you a robot",
+        "are you an ai",
+        "who are you",
+        "what is rag",
+        "what's rag",
+        "session 7",
+        "session 8",
+        "this streamlit",
+        "alignment audit",
+    )
+    return any(n in low for n in needles)
+
+
+def merge_meta_kb_hits(kb: Any | None, query: str, it_hits: list, *, top_k: int) -> list:
+    """
+    When the user asks meta questions, merge in a high-recall retrieval aimed at Course_meta chunks
+    so AeroFleet vs Session 7 and RAG FAQ surface even if the user query is sparse.
+    """
+    if kb is None or not is_site_meta_query(query):
+        return it_hits[:top_k]
+    boost_q = (
+        "Session 7 alignment audit CSV RAG demo AeroFleet X200 Session 8 separate app "
+        "streamlit battery cooling what is this course bot assistant"
+    )
+    try:
+        boost = kb.query(boost_q, top_k=8)
+    except Exception:
+        return it_hits[:top_k]
+    by_title: dict[str, Any] = {}
+    for h in it_hits:
+        by_title[h.title] = h
+    for h in boost:
+        if h.title not in by_title or h.score > by_title[h.title].score:
+            by_title[h.title] = h
+    merged = sorted(
+        by_title.values(),
+        key=lambda h: (0 if getattr(h, "category", "") == "Course_meta" else 1, -h.score),
+    )
+    return merged[:top_k]
+
+
 def format_it_kb_for_prompt(hits: list) -> str:
     """Plain-text block for LLM."""
     if not hits:
@@ -104,10 +158,11 @@ def format_it_kb_markdown(hits: list) -> str:
     """Readable markdown for offline replies."""
     if not hits:
         return "*No close matches in the local IT knowledge base.*"
-    lines = ["**Related IT knowledge base (retrieved):**"]
+    lines = ["**Knowledge base (IT + course FAQ):**"]
     for h in hits:
+        tag = "course / site FAQ" if getattr(h, "category", "") == "Course_meta" else h.category
         lines.append(
-            f"- **{h.title}** (*{h.category}*, match {h.score:.2f}) — {h.body}"
+            f"- **{h.title}** (*{tag}*, match {h.score:.2f}) — {h.body}"
         )
     return "\n".join(lines)
 
@@ -258,6 +313,8 @@ def build_ask_ai_pack(
 ) -> AskAiPack:
     row_idx, case_id, method, audit_score = retrieve_best_case_with_score(df, retriever, hybrid, query)
     audit_weak = audit_match_is_weak(method, audit_score)
+    if is_site_meta_query(query):
+        audit_weak = True  # prefer Course_meta + IT KB over a random audit row
     row = df.iloc[row_idx]
     cid = str(row["case_id"])
     grounded = REVISED_RESPONSES.get(cid, "—")
@@ -272,7 +329,9 @@ def build_ask_ai_pack(
         grounded,
         sentence_attribution_block=sentence_attribution_block,
     )
-    it_hits = _hits_from_kb(kb, query, top_k=it_kb_top_k)
+    tk = max(it_kb_top_k, 6) if is_site_meta_query(query) else it_kb_top_k
+    it_hits = _hits_from_kb(kb, query, top_k=tk)
+    it_hits = merge_meta_kb_hits(kb, query, it_hits, top_k=tk)
     return AskAiPack(
         row_idx=row_idx,
         case_id=cid,

@@ -184,11 +184,20 @@ def _render_ask_ai_tab(df: pd.DataFrame, retriever: TfidfRetriever, path_str: st
     """Ask AI UI; failures are caught in main() so other tabs still run."""
     st.subheader("Ask about this audit")
     st.markdown(
-        "Questions are answered using **(1)** the closest **alignment-audit** row, **(2)** a growing **SQLite IT "
-        "knowledge base** (networking, security, cloud, DevOps, ML/RAG, etc.), and optionally **(3)** **OpenAI**. "
-        "If your question is **off-topic** for the audit row, you still get a useful reply from the IT KB and "
-        "general IT guidance (not only the CSV)."
+        "Answers combine **(1)** the closest **alignment-audit** CSV row, **(2)** a **SQLite knowledge base** "
+        "(IT topics + **Course_meta** FAQ: what this site is, **RAG**, **AeroFleet vs Session 7**), and "
+        "optionally **(3)** **OpenAI**. Off-topic questions still get KB-grounded text—not only the CSV row."
     )
+    with st.expander("What is AeroFleet? What is *this* app?", expanded=False):
+        st.markdown(
+            "- **This Streamlit app** (`app.py`) is the **Session 7 alignment-audit RAG demo** — a small CSV of "
+            "cases (H/O/S/B) about model behavior, not drone hardware.\n"
+            "- **AeroFleet X200** is a **fictional** battery-cooling **engineering corpus** (D01–D10) for **Session 8**. "
+            "It has its **own** app: `streamlit run rag_session8_classroom_exercise/aerofleet_rag_app.py`.\n"
+            "- Questions like *“what is this site?”* or *“what is RAG?”* pull **Course_meta** chunks from the KB so "
+            "you are not stuck with a random audit row.\n"
+            "- **3D** below (optional) mirrors the **Analysis & 3D** tab: LSA projection for visualization only."
+        )
 
     if "ask_ai_messages" not in st.session_state:
         st.session_state.ask_ai_messages = []
@@ -231,6 +240,7 @@ def _render_ask_ai_tab(df: pd.DataFrame, retriever: TfidfRetriever, path_str: st
         st.write("")
         if st.button("Clear chat", key="btn_clear_ask_ai"):
             st.session_state.ask_ai_messages = []
+            st.session_state.pop("ask_ai_plot", None)
             st.rerun()
 
     use_chat_llm = st.checkbox(
@@ -248,6 +258,32 @@ def _render_ask_ai_tab(df: pd.DataFrame, retriever: TfidfRetriever, path_str: st
     for msg in st.session_state.ask_ai_messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
+
+    plot_payload = st.session_state.get("ask_ai_plot")
+    if plot_payload and st.checkbox(
+        "Show interactive **3D LSA** plot for the last question (same idea as Analysis & 3D tab)",
+        value=True,
+        key="ask_ai_show_3d",
+    ):
+        tpl = plotly_template(st.session_state.ui_theme)
+        qplot = str(plot_payload.get("q", "")).strip()
+        with st.expander("3D visualization — TF‑IDF chunks in LSA space + query beam", expanded=False):
+            st.caption(
+                "Projection is **lossy** (3 axes). Retrieval scores use **full-dimensional** cosine similarity "
+                "in the other tabs."
+            )
+            chunk_xyz, q_proj, _, _ = retriever.lsa_3d_layout(query=qplot or None)
+            hits3d = retriever.query(qplot, top_k=min(5, len(df))) if qplot else []
+            top_idx = [h.chunk_index for h in hits3d]
+            fig3d = figure_3d_chunks_and_query(
+                df,
+                chunk_xyz,
+                q_proj if qplot else None,
+                top_idx,
+                title="Ask AI — LSA 3D view (audit chunks + query)",
+                template=tpl,
+            )
+            st.plotly_chart(fig3d, use_container_width=True)
 
     with st.form("ask_ai_form", clear_on_submit=True):
         user_q = st.text_input(
@@ -335,6 +371,7 @@ def _render_ask_ai_tab(df: pd.DataFrame, retriever: TfidfRetriever, path_str: st
 
         st.session_state.ask_ai_messages.append({"role": "user", "content": prompt})
         st.session_state.ask_ai_messages.append({"role": "assistant", "content": reply})
+        st.session_state["ask_ai_plot"] = {"q": prompt}
         st.rerun()
 
 
