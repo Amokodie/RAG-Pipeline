@@ -43,6 +43,40 @@ from audit_chat import (
 from grounded_responses import REVISED_RESPONSES
 from llm_grounding import build_context_block
 
+
+def _resolve_rag_explainer_video() -> Path | None:
+    """Find explainer MP4 at repo root, assets/, or Session 8 exercise folder."""
+    root = Path(__file__).resolve().parent
+    session8 = root / "rag_session8_classroom_exercise"
+    names = ("rag_explainer.mp4", "RAG_Stops_AI_Hallucinations.mp4")
+    for name in names:
+        for folder in (root, root / "assets", session8, session8 / "assets"):
+            p = folder / name
+            if p.is_file():
+                return p
+    return None
+
+
+def _render_rag_explainer_video_block() -> None:
+    st.header("How this RAG Pipeline Prevents Hallucinations")
+    vid = _resolve_rag_explainer_video()
+    if vid is not None:
+        st.video(str(vid))
+        st.caption(
+            "Explainer: **Index → Retrieve → Generate** — grounding the model in retrieved documents "
+            "(non-parametric knowledge) before generation, reducing reliance on parametric memory alone."
+        )
+    else:
+        st.info(
+            "Add **`rag_explainer.mp4`** next to `app.py`, under **`assets/`**, or under "
+            "`rag_session8_classroom_exercise/` — or use **`RAG_Stops_AI_Hallucinations.mp4`** at the project root."
+        )
+        st.caption(
+            "**Index → Retrieve → Generate:** chunking + retrieval supply context before the LLM answers."
+        )
+    st.divider()
+
+
 # Short pedagogical notes: what failed, how retrieval + policy text mitigates it
 CASE_ANALYSIS: dict[str, dict[str, str]] = {
     "H01": {
@@ -446,6 +480,8 @@ def main() -> None:
         )
 
     tpl = plotly_template(st.session_state.ui_theme)
+
+    _render_rag_explainer_video_block()
 
     st.title("RAG pipeline concept demo (detailed)")
     hero_engineering_ribbon(st.session_state.ui_theme)

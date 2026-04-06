@@ -97,9 +97,12 @@ def build_faiss_index():
 
 
 def _resolve_explainer_video() -> Path | None:
+    """Same folder, assets/, or project root — supports common export filenames."""
     base = Path(__file__).resolve().parent
-    for name in ("rag_explainer.mp4",):
-        for folder in (base, base / "assets"):
+    root = base.parent
+    names = ("rag_explainer.mp4", "RAG_Stops_AI_Hallucinations.mp4")
+    for name in names:
+        for folder in (base, base / "assets", root, root / "assets"):
             p = folder / name
             if p.is_file():
                 return p
@@ -124,8 +127,8 @@ def main() -> None:
         )
     else:
         st.info(
-            "Place **`rag_explainer.mp4`** in this folder (`rag_session8_classroom_exercise/`) or under "
-            "`assets/rag_explainer.mp4` to show the overview video here."
+            "Place **`rag_explainer.mp4`** in this folder, under **`assets/`**, or at the **project root** "
+            "as **`RAG_Stops_AI_Hallucinations.mp4`** to show the overview video here."
         )
         st.caption(
             "**Index → Retrieve → Generate:** chunking + vector search retrieve manual passages before generation, "
