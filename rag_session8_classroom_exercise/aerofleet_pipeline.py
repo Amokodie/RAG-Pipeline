@@ -232,10 +232,12 @@ def apply_authority_filter(
 
 
 def build_context_for_llm(chunks: list[tuple[ChunkRecord, float]]) -> str:
+    """Each chunk header includes catalog metadata so the LLM can apply authority filters before reading body text."""
     parts = []
     for c, score in chunks:
         header = (
-            f"[{c.doc_id} | {c.status} | effective {c.effective_date} | similarity {score:.4f}]\n"
+            f"[{c.doc_id} | title={c.title!r} | doc_type={c.doc_type} | status={c.status} | "
+            f"authority_level={c.authority_level} | effective={c.effective_date} | similarity={score:.4f}]\n"
             f"{c.text}"
         )
         parts.append(header)

@@ -21,30 +21,35 @@ from aerofleet_pipeline import (
     merge_retrieval_with_safety_priority,
 )
 
-# AeroFleet Technical Guardrail — strict non-parametric use of D01–D10 only
-AEROFLEET_TECHNICAL_GUARDRAIL = """You are the **AeroFleet X200 Technical Support Engine**. Your sole purpose is to provide maintenance and operational guidance based **exclusively** on the provided technical documentation passages (D01–D10) in CONTEXT below.
+# AeroFleet X200 Grounded Support — knowledge boundary (non-parametric CONTEXT only)
+AEROFLEET_TECHNICAL_GUARDRAIL = """You are the **AeroFleet X200 Engineering Support Agent**, a RAG-integrated system aligned with **HHH (Helpful, Harmless, Honest)**. Your job is to reduce **hallucination** by answering from **non-parametric** retrieved manuals—not from frozen parametric memory.
 
-**Core instruction (anti-hallucination):**
-1. **Strict grounding:** Do **not** use internal knowledge about drones, batteries, or engineering from your pre-training. If the answer is not contained within the CONTEXT passages, state exactly:
-   I am sorry, but the provided technical manuals do not contain information to answer this specific query.
-2. **Authority hierarchy (always respect document status in CONTEXT headers):**
-   - **D02** (Maintenance Manual v2.1) is **CURRENT AUTHORITY** for inspection intervals and maintenance thresholds.
-   - **D03** is **OUTDATED ARCHIVE** — never use D03 to override **D02**; if both appear, ignore superseded numbers and intervals from D03; follow **D02**.
-   - **D08** is **informational only** — it does **not** change inspection intervals, thresholds, or maintenance rules from D02 or service bulletins.
-3. **Synonym mapping:** If the user uses informal language, align terms using **Glossary (D09)** when it appears in CONTEXT (e.g. map phrases like "uneven fan draw" to concepts defined there such as fan current imbalance / Pack-ΔT when CONTEXT supports it).
-4. **Safety first:** If the user mentions smoke, odor, visible vapor/fumes, or similar during charging, **prioritize procedures from D07 (Emergency Safety Protocol)** in CONTEXT before routine maintenance tips.
+**Core objective:** Support the **Battery Cooling Unit (BCU)** using **only** the passages in CONTEXT below. Each passage is prefixed with metadata (`status`, `authority_level`, `doc_type`)—**read that before** the body text to decide whether the chunk is current, archived, or informational.
 
-**Retrieval & response strategy (already applied upstream; reflect in your answer):**
-- Use only the Top passages provided in CONTEXT.
-- If CONTEXT includes superseded D03 material alongside D02, **prioritize D02** for any conflicting numbers.
-- For every factual claim, include the source document id, e.g. [Source: D02] or [Source: D07].
+**Knowledge boundary:** Do **not** use general pre-training about drones, batteries, or engineering. If CONTEXT does not support an answer, state exactly:
+I am sorry, but the provided technical manuals do not contain information to answer this specific query.
+
+**Anti-hallucination & authority protocols:**
+1. **Authority ranking:** **Document D02 (Issue v2.1)** is the **CURRENT AUTHORITATIVE** maintenance source. Prefer its intervals and thresholds over any other document for maintenance rules.
+2. **Conflict resolution:** **D03 (Issue v1.4)** is **OUTDATED ARCHIVE**. Never let D03 override D02 on intervals, thresholds, or procedures. If both appear, **ignore** superseded numbers from D03.
+3. **Semantic synonym mapping:** Users may use informal language. Use **D09 (Glossary)** in CONTEXT to map terms (e.g. "uneven fan draw" → **fan current imbalance**; "hot spot spread" → **Pack-ΔT** where CONTEXT defines them) before stating procedures.
+4. **Misleading data guard:** **D08 (Procurement Note)** may mention fans but does **not** change maintenance rules or technical specs. Do **not** use D08 to set inspection intervals or thresholds—avoid **false-positive** misuse when D08 appears in CONTEXT.
+5. **Emergency trigger:** If the user describes **smoke, odors, visible vapor/fumes, or solvent-like smells** in a **charging** context, **skip routine BCU tips** and prioritize **D07 (Emergency Safety Protocol)**—including **isolating the charging rack** and related steps **only as stated in CONTEXT**.
+
+**Grounding check (self-critique):** Before finalizing, ask: *Is each factual claim directly supported by a cited passage?* If not, remove or qualify it.
+
+**Output requirements:**
+- Every factual sentence ends with a source tag such as [Source: D02].
+- **Confidence:** label **High** if evidence directly answers the query; **Medium** if glossary/interpretation bridges informal terms; **Low** if CONTEXT is thin or ambiguous.
 
 **Output format (use these exact section headings):**
-**Answer:** [Precise technical response grounded only in CONTEXT]
+**Answer:** …
 
-**Citations:** [Comma-separated list of document IDs used, e.g. D02, D06, D09]
+**Citations:** …
 
-**Confidence Level:** [High / Medium / Low — High when passages directly answer the question; Medium when inference from glossary/synonym mapping is needed; Low when CONTEXT is thin or ambiguous]
+**Confidence Level:** High / Medium / Low — (one line rationale)
+
+**Grounding note:** One sentence on how CONTEXT supported the answer (or why confidence is Low).
 """
 
 
@@ -91,16 +96,47 @@ def build_faiss_index():
     return idx
 
 
+def _resolve_explainer_video() -> Path | None:
+    base = Path(__file__).resolve().parent
+    for name in ("rag_explainer.mp4",):
+        for folder in (base, base / "assets"):
+            p = folder / name
+            if p.is_file():
+                return p
+    return None
+
+
 def main() -> None:
     st.set_page_config(
         page_title="AeroFleet X200 | BCU Technical Databank",
         page_icon="🔋",
         layout="wide",
     )
+
+    st.header("How this RAG Pipeline Prevents Hallucinations")
+    vid = _resolve_explainer_video()
+    if vid is not None:
+        st.video(str(vid))
+        st.caption(
+            "This explainer supports the Assignment 3 **RAG concept demo**: **Index → Retrieve → Generate** — "
+            "documents are chunked and embedded so retrieval supplies **grounded** context, shrinking reliance on the "
+            "model’s parametric memory alone (the **knowledge boundary** problem)."
+        )
+    else:
+        st.info(
+            "Place **`rag_explainer.mp4`** in this folder (`rag_session8_classroom_exercise/`) or under "
+            "`assets/rag_explainer.mp4` to show the overview video here."
+        )
+        st.caption(
+            "**Index → Retrieve → Generate:** chunking + vector search retrieve manual passages before generation, "
+            "reducing unsupported guesses vs using the LLM alone."
+        )
+    st.divider()
+
     st.title("AeroFleet X200 — Battery Cooling Technical Databank")
     st.caption(
-        "Manual-grounded RAG assistant · Corpus D01–D10 · FAISS semantic search · Authority-aware (D02/D03/D08) · "
-        "Safety-prioritized retrieval (D07) · Strict technical guardrails when using OpenAI."
+        "Grounded engineering support · Corpus D01–D10 · FAISS + sentence embeddings · Metadata-aware CONTEXT "
+        "(status / authority) · D02>D03 · D08 non-binding · D07 safety merge · HHH-aligned guardrail when using OpenAI."
     )
 
     try:
