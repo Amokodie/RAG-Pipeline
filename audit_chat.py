@@ -110,20 +110,116 @@ def is_site_meta_query(q: str) -> bool:
         "session 8",
         "this streamlit",
         "alignment audit",
+        "how do i run",
+        "streamlit run",
+        "where is the video",
+        "explainer video",
     )
     return any(n in low for n in needles)
 
 
+def is_student_concern_query(q: str) -> bool:
+    """Broad student questions: stress, integrity, privacy, teams, grades anxiety — boost KB retrieval."""
+    low = q.strip().lower()
+    if len(low) < 3:
+        return False
+    needles = (
+        "worried",
+        "worry",
+        "stress",
+        "stressed",
+        "anxiety",
+        "anxious",
+        "overwhelm",
+        "nervous",
+        "scared",
+        "afraid",
+        "panic",
+        "depress",
+        "lonely",
+        "help me",
+        "i need help",
+        "struggling",
+        "struggle",
+        "failing",
+        "fail the",
+        "grade",
+        "grades",
+        "gpa",
+        "exam",
+        "deadline",
+        "extension",
+        "late submission",
+        "plagiarism",
+        "plagiarize",
+        "cheat",
+        "cheating",
+        "academic integrity",
+        "cite",
+        "citation",
+        "reference",
+        "privacy",
+        "api key",
+        "openai key",
+        "secret",
+        "password",
+        "cost",
+        "pay for",
+        "team",
+        "group project",
+        "partner",
+        "conflict",
+        "not working",
+        "doesn't work",
+        "error",
+        "broken",
+        "deploy",
+        "streamlit cloud",
+        "english",
+        "esl",
+        "language barrier",
+        "accessibility",
+        "accommodation",
+        "disability",
+        "career",
+        "job",
+        "interview",
+        "internship",
+        "imposter",
+        "burnout",
+        "sleep",
+        "mental health",
+        "counseling",
+        "counselling",
+        "family pressure",
+        "disappoint",
+        "ethical",
+        "ethics",
+        "is it ok to",
+        "allowed to use",
+        "chatgpt",
+        "integrity",
+    )
+    return any(n in low for n in needles)
+
+
+def should_boost_kb_recall(query: str) -> bool:
+    """Widen IT KB merge when site FAQ or student-concern chunks should compete with a weak audit row."""
+    return is_site_meta_query(query) or is_student_concern_query(query)
+
+
 def merge_meta_kb_hits(kb: Any | None, query: str, it_hits: list, *, top_k: int) -> list:
     """
-    When the user asks meta questions, merge in a high-recall retrieval aimed at Course_meta chunks
-    so AeroFleet vs Session 7 and RAG FAQ surface even if the user query is sparse.
+    When the user asks meta or student-concern questions, merge in a high-recall retrieval so
+    Course_meta and Student_support chunks surface even if the user query is sparse.
     """
-    if kb is None or not is_site_meta_query(query):
+    if kb is None or not should_boost_kb_recall(query):
         return it_hits[:top_k]
     boost_q = (
         "Session 7 alignment audit CSV RAG demo AeroFleet X200 Session 8 separate app "
-        "streamlit battery cooling what is this course bot assistant"
+        "streamlit battery cooling what is this course bot assistant "
+        "OpenAI API key privacy academic integrity plagiarism citation worried stress exam grade deadline "
+        "Student_support counseling team group extension mental health imposter career English accessibility"
     )
     try:
         boost = kb.query(boost_q, top_k=8)
@@ -135,9 +231,26 @@ def merge_meta_kb_hits(kb: Any | None, query: str, it_hits: list, *, top_k: int)
     for h in boost:
         if h.title not in by_title or h.score > by_title[h.title].score:
             by_title[h.title] = h
+    concern = is_student_concern_query(query)
+    site = is_site_meta_query(query)
+
+    def _cat_rank(cat: str) -> int:
+        # Pure wellbeing / study questions: surface Student_support before generic Course_meta.
+        if concern and not site:
+            if cat == "Student_support":
+                return 0
+            if cat == "Course_meta":
+                return 1
+            return 2
+        if cat == "Course_meta":
+            return 0
+        if cat == "Student_support":
+            return 1
+        return 2
+
     merged = sorted(
         by_title.values(),
-        key=lambda h: (0 if getattr(h, "category", "") == "Course_meta" else 1, -h.score),
+        key=lambda h: (_cat_rank(getattr(h, "category", "")), -h.score),
     )
     return merged[:top_k]
 
@@ -160,7 +273,13 @@ def format_it_kb_markdown(hits: list) -> str:
         return "*No close matches in the local IT knowledge base.*"
     lines = ["**Knowledge base (IT + course FAQ):**"]
     for h in hits:
-        tag = "course / site FAQ" if getattr(h, "category", "") == "Course_meta" else h.category
+        cat = getattr(h, "category", "")
+        if cat == "Course_meta":
+            tag = "course / site FAQ"
+        elif cat == "Student_support":
+            tag = "student support (general guidance)"
+        else:
+            tag = cat
         lines.append(
             f"- **{h.title}** (*{tag}*, match {h.score:.2f}) — {h.body}"
         )
@@ -313,8 +432,8 @@ def build_ask_ai_pack(
 ) -> AskAiPack:
     row_idx, case_id, method, audit_score = retrieve_best_case_with_score(df, retriever, hybrid, query)
     audit_weak = audit_match_is_weak(method, audit_score)
-    if is_site_meta_query(query):
-        audit_weak = True  # prefer Course_meta + IT KB over a random audit row
+    if should_boost_kb_recall(query):
+        audit_weak = True  # prefer Course_meta / Student_support + IT KB over a weak audit row
     row = df.iloc[row_idx]
     cid = str(row["case_id"])
     grounded = REVISED_RESPONSES.get(cid, "—")
@@ -329,7 +448,7 @@ def build_ask_ai_pack(
         grounded,
         sentence_attribution_block=sentence_attribution_block,
     )
-    tk = max(it_kb_top_k, 6) if is_site_meta_query(query) else it_kb_top_k
+    tk = max(it_kb_top_k, 8) if should_boost_kb_recall(query) else it_kb_top_k
     it_hits = _hits_from_kb(kb, query, top_k=tk)
     it_hits = merge_meta_kb_hits(kb, query, it_hits, top_k=tk)
     return AskAiPack(

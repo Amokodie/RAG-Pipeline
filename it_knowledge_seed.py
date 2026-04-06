@@ -835,4 +835,177 @@ IT_DOCUMENTS: list[tuple[str, str, str, str]] = [
         "Integrate security in requirements, design, coding, testing, and operations. Shift-left finds issues earlier when cheaper to fix.",
         "curated",
     ),
+    # --- Student_support: common concerns for Ask AI (study skills, ethics, wellbeing framing) ---
+    (
+        "Stress and exam anxiety (general coping)",
+        "Student_support",
+        "Brief anxiety is common. Evidence-based tactics: **sleep**, spaced review, short focused sessions (Pomodoro), and **breathing** exercises. "
+        "If anxiety disrupts daily life, a **counselor** or campus health service can help — not a chatbot.",
+        "curated",
+    ),
+    (
+        "Imposter syndrome in tech programs",
+        "Student_support",
+        "Many learners feel ‘not good enough’ despite evidence of progress. **Compare to yesterday-you**, not to everyone online. "
+        "Use office hours; ask **specific** questions. Completing a RAG demo you can explain beats copying a flashy repo you cannot defend.",
+        "curated",
+    ),
+    (
+        "Academic integrity — collaboration vs copying",
+        "Student_support",
+        "**Discuss** concepts with classmates; **write** your own report and code contributions. "
+        "Copying submissions or hiding AI use where disclosure is required can violate policy. When unsure, **ask the instructor**.",
+        "curated",
+    ),
+    (
+        "How to cite generative AI in coursework",
+        "Student_support",
+        "Follow your department’s style. Typically: name the **tool**, **date**, and **how** you used it (e.g., ‘draft outline’, ‘code assistance’). "
+        "You remain responsible for accuracy — **verify** technical claims against sources.",
+        "curated",
+    ),
+    (
+        "Plagiarism vs paraphrasing vs quotation",
+        "Student_support",
+        "**Quotation** uses exact words with citation. **Paraphrasing** restates ideas in your words with citation. "
+        "**Plagiarism** is presenting others’ work or words as yours. Code plagiarism includes **unattributed** copy-paste from repos.",
+        "curated",
+    ),
+    (
+        "Fear of failing or disappointing family",
+        "Student_support",
+        "Academic pressure is real. **Communicate** early with instructors about confusion rather than hiding struggle. "
+        "Many schools offer **tutoring** and **advising**. This demo cannot change grades — it can help you **learn** concepts to perform better.",
+        "curated",
+    ),
+    (
+        "Sleep and screen time before deadlines",
+        "Student_support",
+        "All-nighters harm **memory consolidation**. Prefer steady progress. Dim screens at night; take breaks to reduce eye strain and errors in code.",
+        "curated",
+    ),
+    (
+        "Asking for deadline extensions professionally",
+        "Student_support",
+        "Email **early**, be **brief**, propose a plan, attach **documentation** if relevant (medical, not casual). "
+        "Policies vary; only your instructor can approve extensions — not this app.",
+        "curated",
+    ),
+    (
+        "English confidence in technical writing",
+        "Student_support",
+        "Clarity beats fancy words. Use **short sentences**, define acronyms once, and run a **spell-check**. "
+        "Many graders value clear structure (intro, method, results, limits) over perfect idiom.",
+        "curated",
+    ),
+    (
+        "Presentation anxiety for demos",
+        "Student_support",
+        "Rehearse **twice** with a timer. Have a **fallback** (recorded video) if live demo fails. "
+        "Explain **one** pipeline slide clearly rather than rushing ten features.",
+        "curated",
+    ),
+    (
+        "Comparing yourself to classmates online",
+        "Student_support",
+        "Social feeds show **highlights**, not struggle. Focus on **rubric** requirements and your **learning goals**. "
+        "A minimal honest demo you understand outperforms a flashy one you cannot explain.",
+        "curated",
+    ),
+    (
+        "Ethics of using LLMs for learning",
+        "Student_support",
+        "LLMs can **tutor** and **brainstorm** if you **verify** outputs and follow policy. "
+        "They can **hallucinate** citations and APIs — cross-check with docs. RAG systems in this course model **grounding** for that reason.",
+        "curated",
+    ),
+    (
+        "Privacy: what not to paste into class chat tools",
+        "Student_support",
+        "Avoid **passwords**, **tokens**, **national IDs**, **private health** details, and **employer secrets**. "
+        "Use **synthetic** data in demos. If you accidentally paste a secret, **revoke** it immediately at the provider.",
+        "curated",
+    ),
+    (
+        "Understanding assignment feedback and rubrics",
+        "Student_support",
+        "Map each **rubric row** to a section in your report. If feedback is unclear, ask **one** targeted question in office hours. "
+        "Iterate: fix the weakest rubric line first.",
+        "curated",
+    ),
+    (
+        "Team conflict — communication norms",
+        "Student_support",
+        "Use a **shared** doc for decisions, **date-stamped** chat for agreements, and **split** Git tasks to reduce merge pain. "
+        "Escalate unresolved conflict to your instructor **before** the deadline.",
+        "curated",
+    ),
+    (
+        "Fear that AI will replace your career",
+        "Student_support",
+        "Roles shift toward **orchestration**, **evaluation**, and **responsible deployment** of models. "
+        "Skills in **data quality**, **retrieval**, **testing**, and **ethics** remain in demand. Continuous learning is the norm in tech.",
+        "curated",
+    ),
+    (
+        "Inclusive language in technical reports",
+        "Student_support",
+        "Use **person-first** wording where relevant, avoid stereotypes, and describe **behavior** not assumed identity traits when discussing users or teams.",
+        "curated",
+    ),
+    (
+        "When to use campus counseling (non-crisis)",
+        "Student_support",
+        "Counseling can help with **stress**, **motivation**, and **adjustment** — not only crises. "
+        "Services are **confidential** within legal limits; check your school’s site for appointments.",
+        "curated",
+    ),
+    (
+        "Note-taking strategies for flipped / lab courses",
+        "Student_support",
+        "During labs, jot **commands that worked**, **error messages**, and **one-sentence** ‘why’ for each step. "
+        "That becomes your **reproducibility** section and saves panic before submission.",
+        "curated",
+    ),
+    (
+        "Balancing part-time work and study",
+        "Student_support",
+        "**Calendar** blocks for deep work; protect **sleep**. If work hurts grades, discuss **load** with employer or advisor — early beats late.",
+        "curated",
+    ),
+    (
+        "Dealing with harsh or vague feedback",
+        "Student_support",
+        "Extract **one** actionable item (e.g., ‘add evaluation metrics’). Ask **clarifying** questions politely. "
+        "Separate **ego** from **artifact** — revise the work, not your self-worth.",
+        "curated",
+    ),
+    (
+        "Building confidence after a bad grade",
+        "Student_support",
+        "Analyze **what** lost points (concept vs presentation). Schedule **retakes** or **bonus** if offered. "
+        "One grade rarely defines your trajectory — **patterns** of effort matter more.",
+        "curated",
+    ),
+    (
+        "Responsible use of Stack Overflow and GitHub",
+        "Student_support",
+        "**Understand** code before merging. **License** matters (copyleft vs permissive). **Attribute** snippets. "
+        "For assignments, your instructor may require **original** implementation — check rules.",
+        "curated",
+    ),
+    (
+        "Neurodiversity and study systems",
+        "Student_support",
+        "Many students benefit from **visual** checklists, **noise-canceling**, and **predictable** routines. "
+        "Formal accommodations require **official** documentation through your school’s process.",
+        "curated",
+    ),
+    (
+        "Healthy skepticism toward AI hype",
+        "Student_support",
+        "Not every problem needs an LLM. **Baselines** (rules, retrieval, smaller models) often win on cost and reliability. "
+        "This course teaches **when** augmentation helps — see RAG vs parametric-only failures.",
+        "curated",
+    ),
 ]

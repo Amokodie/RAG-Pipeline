@@ -42,6 +42,7 @@ from audit_chat import (
 )
 from grounded_responses import REVISED_RESPONSES
 from llm_grounding import build_context_block
+from rag_pedagogy import render_pedagogy_hallucination_lab
 from rag_session8_classroom_exercise.rag_media import render_rag_explainer_block
 
 # Short pedagogical notes: what failed, how retrieval + policy text mitigates it
@@ -186,8 +187,9 @@ def _render_ask_ai_tab(df: pd.DataFrame, retriever: TfidfRetriever, path_str: st
     st.subheader("Ask about this audit")
     st.markdown(
         "Answers combine **(1)** the closest **alignment-audit** CSV row, **(2)** a **SQLite knowledge base** "
-        "(IT topics + **Course_meta** FAQ: what this site is, **RAG**, **AeroFleet vs Session 7**), and "
-        "optionally **(3)** **OpenAI**. Off-topic questions still get KB-grounded text—not only the CSV row."
+        "(IT topics + **Course_meta** site FAQ + **Student_support** guidance on study stress, integrity, privacy, teams, etc.), "
+        "and optionally **(3)** **OpenAI**. Questions about the course app, **worries**, or IT topics pull more KB passages—"
+        "not only a possibly unrelated audit row."
     )
     with st.expander("What is AeroFleet? What is *this* app?", expanded=False):
         st.markdown(
@@ -469,6 +471,8 @@ def main() -> None:
         ),
     )
 
+    render_pedagogy_hallucination_lab(df, retriever)
+
     tab_overview, tab_analysis, tab_case, tab_live, tab_ask_ai, tab_advanced, tab_concepts = st.tabs(
         [
             "Overview & corpus",
@@ -638,6 +642,10 @@ def main() -> None:
     # ----- Case lab -----
     with tab_case:
         st.subheader("Side-by-side: dataset model vs RAG-grounded draft")
+        st.caption(
+            "For a guided tour with **simulated retrieval chunks** and teaching notes, use the "
+            "**Hands-on lab** expander above the tabs (same dataset, deeper narrative)."
+        )
         case_ids = df["case_id"].tolist()
         selected = st.selectbox(
             "Case ID",
