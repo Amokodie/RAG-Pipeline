@@ -394,11 +394,6 @@ def main() -> None:
             "Explainer: **Index → Retrieve → Generate** — grounding the model in retrieved documents "
             "(non-parametric knowledge) before generation, reducing reliance on parametric memory alone."
         ),
-        missing_hint=(
-            "No explainer MP4 found. Add **`rag_explainer.mp4`** or **`RAG_Stops_AI_Hallucinations.mp4`** next to "
-            "`app.py`, under **`assets/`**, or under `rag_session8_classroom_exercise/`. "
-            "On **Streamlit Cloud**, set **`RAG_EXPLAINER_VIDEO_URL`** (Secrets or env) to a direct **MP4** link."
-        ),
     )
 
     data_path = Path(__file__).resolve().parent / "session7_alignment_audit_package" / "data" / "session7_alignment_audit_dataset.csv"

@@ -115,11 +115,6 @@ def main() -> None:
             "documents are chunked and embedded so retrieval supplies **grounded** context, shrinking reliance on the "
             "model’s parametric memory alone (the **knowledge boundary** problem)."
         ),
-        missing_hint=(
-            "No explainer MP4 found. Add **`rag_explainer.mp4`** here, under **`assets/`**, or at the **repo root** "
-            "as **`RAG_Stops_AI_Hallucinations.mp4`**. On **Streamlit Cloud**, set **`RAG_EXPLAINER_VIDEO_URL`** to a "
-            "direct **MP4** link."
-        ),
     )
 
     st.title("AeroFleet X200 — Battery Cooling Technical Databank")

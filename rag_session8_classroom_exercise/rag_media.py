@@ -40,9 +40,20 @@ def _cached_explainer_bytes(path_str: str) -> bytes:
     return Path(path_str).read_bytes()
 
 
-def render_rag_explainer_block(*search_bases: Path, caption: str, missing_hint: str) -> None:
+_DEFAULT_MISSING_CAPTION = (
+    "No explainer MP4 in this deployment. Add **`rag_session8_classroom_exercise/assets/rag_explainer.mp4`** "
+    "to the repository, or set secret **`RAG_EXPLAINER_VIDEO_URL`** to a direct MP4 link."
+)
+
+
+def render_rag_explainer_block(
+    *search_bases: Path,
+    caption: str,
+    missing_hint: str | None = None,
+) -> None:
     """
     Embed explainer: optional remote URL, else local MP4 bytes (reliable on Windows paths with spaces).
+    Bundled path checked first: ``rag_session8_classroom_exercise/assets/rag_explainer.mp4``.
     """
     st.header("How this RAG Pipeline Prevents Hallucinations")
 
@@ -53,6 +64,8 @@ def render_rag_explainer_block(*search_bases: Path, caption: str, missing_hint: 
         st.divider()
         return
 
+    hint = missing_hint if missing_hint is not None else _DEFAULT_MISSING_CAPTION
+
     vid = resolve_explainer_video(*search_bases)
     if vid is not None:
         try:
@@ -62,7 +75,7 @@ def render_rag_explainer_block(*search_bases: Path, caption: str, missing_hint: 
             st.caption(f"Loaded: `{vid.name}` ({len(data) / (1024 * 1024):.1f} MB).")
         except OSError as e:
             st.error(f"Could not read video file: {e}")
-            st.info(missing_hint)
+            st.caption(hint)
     else:
-        st.info(missing_hint)
+        st.caption(hint)
     st.divider()
