@@ -32,3 +32,6 @@ models/
 .env
 .env.local
 *.pem
+
+# Local IT knowledge DB (recreated from seed on first run)
+data/it_knowledge.sqlite

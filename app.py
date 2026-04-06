@@ -34,7 +34,12 @@ from visualization import (
     figure_similarity_heatmap,
     figure_softmax_mass,
 )
-from audit_chat import offline_markdown_answer, openai_conversational_answer, retrieve_best_case
+from audit_chat import (
+    build_ask_ai_pack,
+    format_it_kb_for_prompt,
+    offline_multisource_answer,
+    openai_multisource_answer,
+)
 from grounded_responses import REVISED_RESPONSES
 from llm_grounding import build_context_block
 
@@ -154,6 +159,18 @@ def cached_hybrid(path_str: str):
     return h
 
 
+@st.cache_resource
+def cached_it_kb_retriever():
+    """TF-IDF index over local SQLite IT knowledge base (seeded on first run)."""
+    from it_kb_retrieval import ItKbRetriever
+    from it_knowledge_db import ensure_database
+
+    db_path = ensure_database()
+    r = ItKbRetriever(db_path)
+    r.fit()
+    return r
+
+
 def rag_prompt_template(case_id: str, category: str, subcategory: str, user_prompt: str, revised: str) -> str:
     return (
         "[SYSTEM] You are a teaching assistant. Answer only using the RETRIEVED_CONTEXT. "
@@ -167,10 +184,10 @@ def _render_ask_ai_tab(df: pd.DataFrame, retriever: TfidfRetriever, path_str: st
     """Ask AI UI; failures are caught in main() so other tabs still run."""
     st.subheader("Ask about this audit")
     st.markdown(
-        "Ask **natural-language questions** about alignment, safety, honesty, bias, or specific **case IDs** "
-        "(H01, O01, …). Each turn **retrieves** the closest CSV row—**hybrid BM25 + dense** when available, "
-        "otherwise **TF‑IDF**—then answers from **instructor-aligned** notes. Optional **OpenAI** adds a "
-        "conversational tone while staying **grounded** on that row only."
+        "Questions are answered using **(1)** the closest **alignment-audit** row, **(2)** a growing **SQLite IT "
+        "knowledge base** (networking, security, cloud, DevOps, ML/RAG, etc.), and optionally **(3)** **OpenAI**. "
+        "If your question is **off-topic** for the audit row, you still get a useful reply from the IT KB and "
+        "general IT guidance (not only the CSV)."
     )
 
     if "ask_ai_messages" not in st.session_state:
@@ -180,6 +197,11 @@ def _render_ask_ai_tab(df: pd.DataFrame, retriever: TfidfRetriever, path_str: st
         hybrid_chat = cached_hybrid(path_str)
     except Exception:
         hybrid_chat = None
+
+    try:
+        kb_retriever = cached_it_kb_retriever()
+    except Exception:
+        kb_retriever = None
 
     if hybrid_chat is not None and (
         getattr(hybrid_chat, "_dense_is_bm25_fallback", False) or not hybrid_chat.dense.available
@@ -237,12 +259,9 @@ def _render_ask_ai_tab(df: pd.DataFrame, retriever: TfidfRetriever, path_str: st
 
     if submitted and user_q.strip():
         prompt = user_q.strip()
-        with st.spinner("Retrieving the best-matching case…"):
-            row_idx, _cid_ret, method = retrieve_best_case(df, retriever, hybrid_chat, prompt)
-            row = df.iloc[row_idx]
-            cid = str(row["case_id"])
-            grounded = REVISED_RESPONSES.get(cid, "—")
-            excerpt = str(row["model_response"])[:1200]
+        with st.spinner("Retrieving audit row + IT knowledge base…"):
+            pack = build_ask_ai_pack(df, retriever, hybrid_chat, kb_retriever, prompt)
+            row = df.iloc[pack.row_idx]
             attr_block = ""
             if hybrid_chat is not None and hybrid_chat.dense.available:
                 try:
@@ -260,32 +279,57 @@ def _render_ask_ai_tab(df: pd.DataFrame, retriever: TfidfRetriever, path_str: st
                 except Exception:
                     pass
 
-            ctx = build_context_block(
-                cid,
-                str(row["category"]),
-                str(row["subcategory"]),
-                str(row["user_prompt"]),
-                excerpt,
-                grounded,
-                sentence_attribution_block=attr_block if attr_block else None,
-            )
+            if attr_block:
+                pack = build_ask_ai_pack(
+                    df,
+                    retriever,
+                    hybrid_chat,
+                    kb_retriever,
+                    prompt,
+                    sentence_attribution_block=attr_block,
+                )
+
+            grounded = REVISED_RESPONSES.get(pack.case_id, "—")
+            it_kb_text = format_it_kb_for_prompt(pack.it_hits)
+            it_kb_used = len(pack.it_hits) > 0
 
         if use_chat_llm and chat_api_key.strip():
             try:
-                with st.spinner("Generating grounded reply…"):
-                    reply = openai_conversational_answer(
+                with st.spinner("Generating reply…"):
+                    reply = openai_multisource_answer(
                         api_key=chat_api_key.strip(),
                         model=chat_model.strip() or "gpt-4o-mini",
                         user_query=prompt,
-                        context_block=ctx,
+                        audit_context_block=pack.ctx_audit,
+                        it_kb_block=it_kb_text,
+                        audit_weak=pack.audit_weak,
+                        it_kb_used=it_kb_used,
                     )
             except Exception as ex:
                 reply = (
                     f"**OpenAI error:** `{ex}`\n\n---\n\n"
-                    + offline_markdown_answer(df, row_idx, cid, grounded, method)
+                    + offline_multisource_answer(
+                        df,
+                        pack.row_idx,
+                        pack.case_id,
+                        grounded,
+                        pack.method,
+                        pack.audit_score,
+                        pack.audit_weak,
+                        pack.it_hits,
+                    )
                 )
         else:
-            reply = offline_markdown_answer(df, row_idx, cid, grounded, method)
+            reply = offline_multisource_answer(
+                df,
+                pack.row_idx,
+                pack.case_id,
+                grounded,
+                pack.method,
+                pack.audit_score,
+                pack.audit_weak,
+                pack.it_hits,
+            )
             if use_chat_llm and not chat_api_key.strip():
                 reply += "\n\n*Enable OpenAI by adding an API key above.*"
 
@@ -359,7 +403,7 @@ def main() -> None:
             f"(cap {stats['max_features_cap']}) · `{data_path.name}`"
         )
         st.markdown(
-            "**Ask AI tab:** chat-style Q&A over the audit (retrieval + grounded notes; optional OpenAI). "
+            "**Ask AI tab:** audit row + **SQLite IT knowledge base** + optional OpenAI (answers even when the question is off-audit). "
             "**Analysis tab:** LSA + heatmaps. **Advanced tab:** sentence-transformers, **BM25+dense** fusion, "
             "**sentence attributions**, optional **OpenAI** strict grounding."
         )
@@ -946,7 +990,7 @@ def main() -> None:
         )
         st.subheader("Optional upgrades (implemented)")
         st.markdown(
-            "- **Ask AI** tab: chat-style Q&A with retrieval + grounded notes; optional OpenAI.\n"
+            "- **Ask AI** tab: audit + **IT KB** (SQLite) + optional OpenAI; weak audit match still returns IT-focused answers.\n"
             "- **Semantic retrieval** + **hybrid BM25+dense** + **RRF** — see tab **Advanced: hybrid + LLM**.\n"
             "- **Sentence attributions** on the retrieved row (prompt + `model_response`).\n"
             "- **OpenAI** optional: strict system prompt; answers only from `RETRIEVED_CONTEXT` + instructor notes."

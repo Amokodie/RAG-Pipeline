@@ -1,0 +1,11 @@
+doc_id,title,doc_type,status,effective_date,authority_level,main_use,filename
+D01,System Overview,System overview,reference,2026-01-10,Medium,Nominal temperature range and sensor definitions,D01_system_overview.md
+D02,Maintenance Manual v2.1,Maintenance manual,current_authority,2026-01-15,High,Current inspection intervals and thresholds,D02_maintenance_manual_v2_current.md
+D03,Maintenance Manual v1.4,Maintenance manual,outdated_archive,2025-05-02,Low,Archived intervals; kept only for comparison,D03_maintenance_manual_v1_outdated.md
+D04,Service Bulletin SB-17,Service bulletin,active_update,2026-02-20,High,Hot-day heavy-payload operational actions,D04_service_bulletin_SB17.md
+D05,Incident Report IR-04,Incident report,case_evidence,2026-02-28,Medium,Pre-runaway venting precursor evidence,D05_incident_report_IR04.md
+D06,Troubleshooting Guide,Troubleshooting guide,reference,2026-01-18,Medium,Cause mapping and first troubleshooting step,D06_troubleshooting_guide.md
+D07,Emergency Safety Protocol,Safety protocol,current_authority,2026-01-12,High,Emergency response during charging events,D07_safety_protocol.md
+D08,Procurement Note,Procurement note,informational_only,2026-02-05,Low,Mentions fans but does not change maintenance rules,D08_procurement_note.md
+D09,Glossary and Data Dictionary,Glossary,reference,2026-01-10,Low,Synonyms and definitions,D09_glossary_data_dictionary.md
+D10,Lab Test Summary,Lab summary,reference,2026-02-14,Medium,Supports charging and ΔT interpretation,D10_lab_test_summary.md
