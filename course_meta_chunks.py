@@ -167,4 +167,79 @@ COURSE_META_DOCUMENTS: list[tuple[str, str, str, str]] = [
         "It is **strength** to ask for help early.",
         "curated",
     ),
+    (
+        "What is hallucination (definition for this course)",
+        "Course_meta",
+        "**Hallucination** (in LLMs) means the model generates **plausible-sounding content that is false, unsupported, or not grounded** in the evidence it was given—e.g. **invented citations**, wrong dates, or details that **look** factual but are not. "
+        "It is different from **I don’t know** (refusal) or clearly hedged uncertainty. "
+        "Mitigations include **RAG** (retrieve real documents before answering), **tools**, **citations to verified sources**, and **human review** for high-stakes use. "
+        "In this CSV lab, case **O01** illustrates **citation-style** hallucination; case **H04** is about **sycophancy** (agreeing with a false premise)—related to alignment failures, **not** the definition of hallucination.",
+        "curated",
+    ),
+    (
+        "Main navigation — tabs at the top of this app",
+        "Course_meta",
+        "The **horizontal tab bar** (under the title and explainer video) switches **pages** of the app. "
+        "Order: **Overview & corpus** → **Analysis & 3D embedding** → **Case lab (failure vs RAG)** → **Live retrieval inspector** → **Ask AI** → **Advanced: hybrid + LLM** → **Concepts & checklist**. "
+        "Click a tab to change the main content; the **left sidebar** (Appearance, Engineering storyboard) stays visible across tabs. "
+        "This mirrors the **Session 6–8 / Assignment 3** demo flow: corpus → analysis → examples → interactive retrieval → chat → advanced models → concepts.",
+        "curated",
+    ),
+    (
+        "Overview & corpus tab — what it shows",
+        "Course_meta",
+        "**Overview & corpus** is the **first tab**: dataset **metrics** (chunk count, vocabulary size), **bar chart** of rows by `category` (H/O/S/B), **preview** of the CSV, **full sortable table**, and **chunk length** analysis with a Plotly chart. "
+        "Use it to understand **what is in the alignment-audit file** before retrieval. **ASCII pipeline** expander shows Index → Retrieve → Generate in text form.",
+        "curated",
+    ),
+    (
+        "Analysis & 3D embedding tab — meaning and plots",
+        "Course_meta",
+        "**Analysis & 3D embedding** is the **quantitative** tab: **TF‑IDF** geometry of chunks (intra- vs inter-category cosine, **sparsity**), **LSA** variance bars, **self-query rank** (each row’s prompt as query), **margin** (top1−top2 similarity), **heatmap** of pairwise chunk cosine, **softmax** mass over chunks, and an **interactive 3D** LSA plot with a **query beam** to top‑k neighbors. "
+        "**Analysis** here means **statistical / geometric analysis of the index**, not “grading your assignment.” 3D is **visualization only**; real retrieval uses full TF‑IDF or hybrid scores in high dimensions.",
+        "curated",
+    ),
+    (
+        "Case lab tab — failure vs RAG side-by-side",
+        "Course_meta",
+        "**Case lab (failure vs RAG)** lets you pick a **case_id** (e.g. O01, H04). **Left column:** original **user_prompt** and **model_response** from the CSV. **Right column:** **RAG-grounded** revised text from `grounded_responses.py`. "
+        "Expander shows a **simulated prompt** after retrieval. **Auto-check** reports whether TF‑IDF rank‑1 for that prompt is the same row—short prompts may not rank #1.",
+        "curated",
+    ),
+    (
+        "Live retrieval inspector tab — how it works",
+        "Course_meta",
+        "**Live retrieval inspector** lets you type a **free query** and see: **keyword** fallback hits, **TF‑IDF query term weights**, **cosine similarity** bar chart and **softmax** mass, **top‑k chunk text**, and optional **dominant terms** for the top hit. "
+        "Use it to **debug** why a certain row matches—lexical overlap vs semantic intent.",
+        "curated",
+    ),
+    (
+        "Ask AI tab — chat and knowledge base",
+        "Course_meta",
+        "**Ask AI** combines (1) the **closest alignment-audit row**, (2) **SQLite** passages (IT + **Course_meta** FAQ + **Student_support**), and (3) optional **OpenAI**. "
+        "Enter a question, optionally enable **OpenAI** and set **model**; **Clear chat** resets history. **3D LSA** view after a query is optional. "
+        "Questions about **this app’s tabs**, **definitions**, or **wellbeing** are steered to the KB—see other Course_meta entries.",
+        "curated",
+    ),
+    (
+        "Advanced tab — hybrid retrieval and LLM grounding",
+        "Course_meta",
+        "**Advanced: hybrid + LLM** adds **BM25 + dense** sentence-transformer fusion, **sentence-level attributions**, **strict OpenAI** grounding on retrieved context, and related controls. "
+        "If the dense model fails to load, the UI falls back to **BM25-heavy** hybrid. **Requires** more dependencies and may download models on first run.",
+        "curated",
+    ),
+    (
+        "Concepts & checklist tab",
+        "Course_meta",
+        "**Concepts & checklist** maps **failure modes** (helpfulness, safety, honesty, bias) to **RAG mitigations**, lists **assignment** session mapping, and **optional upgrades** implemented in the repo. "
+        "Use it for **report writing** and **exam-style** explanations of why retrieval helps.",
+        "curated",
+    ),
+    (
+        "Left sidebar — Appearance and Engineering storyboard",
+        "Course_meta",
+        "The **left sidebar** has **Appearance** (radio **light** / **dark** theme — applies `ui_theme.py` CSS) and **Engineering storyboard** (short notes on chunking, TF‑IDF, retrieval + augmentation, **spotlight cases**). "
+        "Bottom shows **corpus stats** (chunk count, vocabulary size, CSV filename). Sidebar content is **not** a separate Streamlit page; it complements whichever **main tab** is active.",
+        "curated",
+    ),
 ]

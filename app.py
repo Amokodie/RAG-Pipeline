@@ -187,9 +187,9 @@ def _render_ask_ai_tab(df: pd.DataFrame, retriever: TfidfRetriever, path_str: st
     st.subheader("Ask about this audit")
     st.markdown(
         "Answers combine **(1)** the closest **alignment-audit** CSV row, **(2)** a **SQLite knowledge base** "
-        "(IT topics + **Course_meta** site FAQ + **Student_support** guidance on study stress, integrity, privacy, teams, etc.), "
-        "and optionally **(3)** **OpenAI**. Questions about the course app, **worries**, or IT topics pull more KB passages—"
-        "not only a possibly unrelated audit row."
+        "(IT topics + **Course_meta**: site FAQ, **tab/navigation guides** for each page, definitions + **Student_support**), "
+        "and optionally **(3)** **OpenAI**. Ask how **Overview / Analysis / Case lab / Live / Advanced / Concepts** work, "
+        "or what the **sidebar** does — retrieval pulls those guides. **Worries** and IT topics also widen KB recall."
     )
     with st.expander("What is AeroFleet? What is *this* app?", expanded=False):
         st.markdown(
@@ -356,6 +356,7 @@ def _render_ask_ai_tab(df: pd.DataFrame, retriever: TfidfRetriever, path_str: st
                         pack.audit_score,
                         pack.audit_weak,
                         pack.it_hits,
+                        user_query=prompt,
                     )
                 )
         else:
@@ -368,6 +369,7 @@ def _render_ask_ai_tab(df: pd.DataFrame, retriever: TfidfRetriever, path_str: st
                 pack.audit_score,
                 pack.audit_weak,
                 pack.it_hits,
+                user_query=prompt,
             )
             if use_chat_llm and not chat_api_key.strip():
                 reply += "\n\n*Enable OpenAI by adding an API key above.*"

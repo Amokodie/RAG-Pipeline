@@ -118,6 +118,71 @@ def is_site_meta_query(q: str) -> bool:
     return any(n in low for n in needles)
 
 
+def is_app_navigation_query(q: str) -> bool:
+    """Questions about tabs, sidebar, what each page does, or how to use this Streamlit UI."""
+    low = q.strip().lower()
+    if len(low) < 3:
+        return False
+    needles = (
+        "navigation",
+        "navigate",
+        "sidebar",
+        "which tab",
+        "what tab",
+        "tabs ",
+        " tab ",
+        "main page",
+        "overview &",
+        "overview tab",
+        "corpus tab",
+        "analysis &",
+        "analysis tab",
+        "what is the analysis",
+        "meaning of the analysis",
+        "what does analysis",
+        "3d embedding",
+        "3d tab",
+        "lsa ",
+        "case lab",
+        "live retrieval",
+        "retrieval inspector",
+        "ask ai tab",
+        "advanced tab",
+        "advanced:",
+        "concepts &",
+        "concepts tab",
+        "heatmap",
+        "silhouette",
+        "margin bar",
+        "sankey",
+        "how do i use",
+        "where do i find",
+        "where is the",
+        "how does this app",
+        "how does the app",
+        "pages in the app",
+        "appearance",
+        "light mode",
+        "dark mode",
+        "theme",
+        "engineering storyboard",
+        "spotlight cases",
+        "hybrid +",
+        "bm25",
+        "sentence attribution",
+        "failure modes",
+        "assignment mapping",
+        "vertical block",
+        "streamlit cloud",
+        "manage app",
+        "ask ai",
+        "where is ask",
+        "which page has",
+        "go to the",
+    )
+    return any(n in low for n in needles)
+
+
 def is_student_concern_query(q: str) -> bool:
     """Broad student questions: stress, integrity, privacy, teams, grades anxiety — boost KB retrieval."""
     low = q.strip().lower()
@@ -203,24 +268,92 @@ def is_student_concern_query(q: str) -> bool:
     return any(n in low for n in needles)
 
 
+def is_glossary_concept_query(q: str) -> bool:
+    """
+    Definition-style questions (what is / define …) about course concepts.
+    These should lean on the KB + definitions, not a tangentially similar audit row (e.g. H04 vs hallucination).
+    """
+    low = q.strip().lower()
+    if len(low) < 6:
+        return False
+    asking = any(
+        p in low
+        for p in (
+            "what is ",
+            "what are ",
+            "what's ",
+            "define ",
+            "definition of ",
+            "meaning of ",
+            "explain ",
+            "what does ",
+            "tell me about",
+        )
+    )
+    if not asking:
+        return False
+    terms = (
+        "hallucination",
+        "hallucinate",
+        "rag",
+        "retrieval",
+        "embedding",
+        "grounding",
+        "alignment",
+        "rlhf",
+        "dpo",
+        "fine-tun",
+        "sycophancy",
+        "bias",
+        "token",
+        "parametric",
+        "confabulation",
+        "llm",
+        "temperature",
+        "overfitting",
+        "softmax",
+        "vector",
+        "attention",
+        "prompt",
+    )
+    return any(t in low for t in terms)
+
+
 def should_boost_kb_recall(query: str) -> bool:
-    """Widen IT KB merge when site FAQ or student-concern chunks should compete with a weak audit row."""
-    return is_site_meta_query(query) or is_student_concern_query(query)
+    """Widen IT KB merge for site FAQ, app navigation, student concerns, or glossary questions."""
+    return (
+        is_site_meta_query(query)
+        or is_app_navigation_query(query)
+        or is_student_concern_query(query)
+        or is_glossary_concept_query(query)
+    )
 
 
 def merge_meta_kb_hits(kb: Any | None, query: str, it_hits: list, *, top_k: int) -> list:
     """
-    When the user asks meta or student-concern questions, merge in a high-recall retrieval so
-    Course_meta and Student_support chunks surface even if the user query is sparse.
+    When the user asks meta, navigation, student-concern, or glossary questions, merge in a high-recall retrieval so
+    Course_meta / IT chunks surface even if the user query is sparse.
     """
     if kb is None or not should_boost_kb_recall(query):
         return it_hits[:top_k]
-    boost_q = (
-        "Session 7 alignment audit CSV RAG demo AeroFleet X200 Session 8 separate app "
-        "streamlit battery cooling what is this course bot assistant "
-        "OpenAI API key privacy academic integrity plagiarism citation worried stress exam grade deadline "
-        "Student_support counseling team group extension mental health imposter career English accessibility"
-    )
+    if is_glossary_concept_query(query):
+        boost_q = (
+            f"{query.strip()} definition explain LLM hallucination false fluent confabulation "
+            "RAG retrieval grounding citation alignment parametric memory IT_KNOWLEDGE_BASE course"
+        )
+    elif is_app_navigation_query(query):
+        boost_q = (
+            f"{query.strip()} Streamlit tabs Overview corpus Analysis 3D LSA Case lab Live retrieval Ask AI Advanced Concepts "
+            "sidebar Appearance theme heatmap silhouette margin cosine TF-IDF sparse matrix hybrid BM25 sentence attribution "
+            "navigation Engineering storyboard explainer video pedagogy hands-on lab"
+        )
+    else:
+        boost_q = (
+            "Session 7 alignment audit CSV RAG demo AeroFleet X200 Session 8 separate app "
+            "streamlit battery cooling what is this course bot assistant "
+            "OpenAI API key privacy academic integrity plagiarism citation worried stress exam grade deadline "
+            "Student_support counseling team group extension mental health imposter career English accessibility"
+        )
     try:
         boost = kb.query(boost_q, top_k=8)
     except Exception:
@@ -233,6 +366,8 @@ def merge_meta_kb_hits(kb: Any | None, query: str, it_hits: list, *, top_k: int)
             by_title[h.title] = h
     concern = is_student_concern_query(query)
     site = is_site_meta_query(query)
+    gloss = is_glossary_concept_query(query)
+    nav = is_app_navigation_query(query)
 
     def _cat_rank(cat: str) -> int:
         # Pure wellbeing / study questions: surface Student_support before generic Course_meta.
@@ -242,6 +377,24 @@ def merge_meta_kb_hits(kb: Any | None, query: str, it_hits: list, *, top_k: int)
             if cat == "Course_meta":
                 return 1
             return 2
+        # Definitions: Course_meta + AI/ML before Student_support.
+        if gloss and not site and not concern:
+            if cat == "Course_meta":
+                return 0
+            if cat == "AI/ML":
+                return 1
+            if cat == "Student_support":
+                return 2
+            return 3
+        # App structure / tabs: Course_meta guides first.
+        if nav and not concern:
+            if cat == "Course_meta":
+                return 0
+            if cat == "AI/ML":
+                return 1
+            if cat == "Student_support":
+                return 2
+            return 3
         if cat == "Course_meta":
             return 0
         if cat == "Student_support":
@@ -312,15 +465,62 @@ def offline_multisource_answer(
     audit_score: float,
     audit_weak: bool,
     it_hits: list,
+    *,
+    user_query: str = "",
 ) -> str:
     """Audit row + IT KB + note when the question is likely out of audit context."""
+    row = df.iloc[row_index]
+    kb_md = format_it_kb_markdown(it_hits)
+
+    if is_glossary_concept_query(user_query) and it_hits:
+        audit_block = (
+            f"**Retrieved row:** `{case_id}` · *{row['category']}* · {row['subcategory']}\n\n"
+            f"*Retrieval:* {method}\n\n"
+            f"**Note from that audit case (illustrative — not always a literal definition):**\n\n{instructor_text}\n\n"
+            f"---\n*Original audit prompt:* {str(row['user_prompt'])[:400]}"
+            f"{'…' if len(str(row['user_prompt'])) > 400 else ''}"
+        )
+        return (
+            "> **Definition-style question:** The **knowledge base** below answers *what the term means*. "
+            "The audit row is a **related teaching example** from the CSV (e.g. H04 is about **sycophancy**, "
+            "not the textbook definition of **hallucination**).\n\n"
+            + kb_md
+            + "\n\n---\n\n**Related alignment-audit row (lab example):**\n\n"
+            + audit_block
+            + "\n\n"
+            + f"**Audit relevance score:** {audit_score:.3f} · "
+            + (
+                "*Prefer the passages above for definitions.*"
+                if audit_weak
+                else "*Audit match is moderate — still use KB above for definitions.*"
+            )
+        )
+
+    if is_app_navigation_query(user_query) and it_hits and not is_glossary_concept_query(user_query):
+        audit_block = (
+            f"**Retrieved row:** `{case_id}` · *{row['category']}* · {row['subcategory']}\n\n"
+            f"*Retrieval:* {method}\n\n"
+            f"**Optional lab context:**\n\n{instructor_text}\n\n"
+            f"---\n*Original audit prompt:* {str(row['user_prompt'])[:400]}"
+            f"{'…' if len(str(row['user_prompt'])) > 400 else ''}"
+        )
+        return (
+            "> **App / navigation question:** The **knowledge base** below describes **tabs, sidebar, and what each area does**. "
+            "The alignment-audit row at the end is **optional** CSV context—not a substitute for the UI guides.\n\n"
+            + kb_md
+            + "\n\n---\n\n**Optional — related alignment-audit row:**\n\n"
+            + audit_block
+            + "\n\n"
+            + f"**Audit relevance score:** {audit_score:.3f}"
+        )
+
     base = offline_markdown_answer(df, row_index, case_id, instructor_text, method)
     extra = [
         "",
         f"**Audit relevance score:** {audit_score:.3f} · "
         f"**{'Weak match — question may be broader than this audit row' if audit_weak else 'Reasonable match to retrieved row'}**",
         "",
-        format_it_kb_markdown(it_hits),
+        kb_md,
     ]
     if audit_weak:
         extra.insert(
@@ -373,6 +573,22 @@ def openai_multisource_answer(
         if audit_weak
         else "The audit row appears reasonably relevant; prioritize it when it answers the question."
     )
+    if is_glossary_concept_query(user_query):
+        weak_note = (
+            "**The user asked for a DEFINITION or concept explanation.** "
+            "Answer using **IT_KNOWLEDGE_BASE first** (definitions, RAG, hallucination, etc.). "
+            "Use the alignment-audit row **only as an optional example** if it truly illustrates the term; "
+            "many rows (e.g. H04 sycophancy) are **not** the definition of hallucination. "
+            "Lead with a clear definition in your own words grounded in the KB."
+        )
+    elif is_app_navigation_query(user_query):
+        weak_note = (
+            "**The user is asking about this Streamlit app: navigation, tabs, sidebar, or what a page/section means.** "
+            "Answer primarily from **IT_KNOWLEDGE_BASE** passages whose titles mention **tabs**, **Analysis**, **Overview**, etc. "
+            "List tab names accurately: **Overview & corpus**, **Analysis & 3D embedding**, **Case lab (failure vs RAG)**, "
+            "**Live retrieval inspector**, **Ask AI**, **Advanced: hybrid + LLM**, **Concepts & checklist**. "
+            "The alignment-audit row is **secondary** unless it illustrates an alignment concept relevant to the question."
+        )
     kb_status = (
         "IT knowledge base: passages were retrieved."
         if it_kb_used
@@ -433,7 +649,7 @@ def build_ask_ai_pack(
     row_idx, case_id, method, audit_score = retrieve_best_case_with_score(df, retriever, hybrid, query)
     audit_weak = audit_match_is_weak(method, audit_score)
     if should_boost_kb_recall(query):
-        audit_weak = True  # prefer Course_meta / Student_support + IT KB over a weak audit row
+        audit_weak = True  # prefer Course_meta / navigation / glossary / student KB over a tangential audit row
     row = df.iloc[row_idx]
     cid = str(row["case_id"])
     grounded = REVISED_RESPONSES.get(cid, "—")
@@ -448,7 +664,7 @@ def build_ask_ai_pack(
         grounded,
         sentence_attribution_block=sentence_attribution_block,
     )
-    tk = max(it_kb_top_k, 8) if should_boost_kb_recall(query) else it_kb_top_k
+    tk = max(it_kb_top_k, 10) if should_boost_kb_recall(query) else it_kb_top_k
     it_hits = _hits_from_kb(kb, query, top_k=tk)
     it_hits = merge_meta_kb_hits(kb, query, it_hits, top_k=tk)
     return AskAiPack(

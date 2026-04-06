@@ -237,9 +237,66 @@ def _light_interactive_widgets_css() -> str:
     sec_fg = "#0f172a"
     sec_border = "#cbd5e1"
     return f"""
+  /* ---- Theme tokens: config.toml is dark; force light shell vars so Base Web widgets are not black ---- */
   .stApp {{
     --primary-color: #0284c7 !important;
     --text-color: {sec_fg} !important;
+    --background-color: #ffffff !important;
+    --secondary-background-color: #f1f5f9 !important;
+    color-scheme: light !important;
+  }}
+  /* ---- Main area: text inputs, password fields, textareas (Ask AI form, etc.) ---- */
+  section[data-testid="stMain"] [data-baseweb="input"],
+  section[data-testid="stMain"] [data-baseweb="textarea"] {{
+    background-color: #ffffff !important;
+    border: 1px solid {sec_border} !important;
+    border-radius: 0.5rem !important;
+    color: {sec_fg} !important;
+  }}
+  section[data-testid="stMain"] [data-baseweb="input"] input,
+  section[data-testid="stMain"] [data-baseweb="input"] textarea,
+  section[data-testid="stMain"] [data-baseweb="textarea"] textarea,
+  .stApp [data-testid="stTextInput"] input,
+  .stApp [data-testid="stTextArea"] textarea,
+  .stApp [data-testid="stChatInput"] textarea {{
+    background-color: #ffffff !important;
+    color: {sec_fg} !important;
+    -webkit-text-fill-color: {sec_fg} !important;
+    caret-color: {sec_fg} !important;
+  }}
+  /* Nested wrappers Streamlit uses for st.text_input / password */
+  .stApp [data-testid="stTextInput"] [data-baseweb="input"] > div,
+  .stApp [data-testid="stTextInput"] [data-baseweb="base-input"] {{
+    background-color: #ffffff !important;
+    border-color: {sec_border} !important;
+  }}
+  .stApp form [data-baseweb="input"],
+  .stApp form [data-baseweb="input"] input,
+  .stApp form [data-baseweb="textarea"] textarea {{
+    background-color: #ffffff !important;
+    color: {sec_fg} !important;
+    -webkit-text-fill-color: {sec_fg} !important;
+  }}
+  /* ---- Checkboxes + labels in main ---- */
+  section[data-testid="stMain"] [data-baseweb="checkbox"] {{
+    color: {sec_fg} !important;
+  }}
+  section[data-testid="stMain"] [data-baseweb="checkbox"] label,
+  section[data-testid="stMain"] [data-testid="stWidgetLabel"] label,
+  section[data-testid="stMain"] label[data-testid="stWidgetLabel"] {{
+    color: {sec_fg} !important;
+  }}
+  /* ---- Form submit + generic buttons in main (avoid solid black primary fill) ---- */
+  section[data-testid="stMain"] [data-testid="stFormSubmitButton"] button,
+  section[data-testid="stMain"] button[kind="secondary"] {{
+    background-color: {sec_bg} !important;
+    color: {sec_fg} !important;
+    border: 1px solid {sec_border} !important;
+  }}
+  section[data-testid="stMain"] button[kind="primary"] {{
+    background-color: #0284c7 !important;
+    color: #ffffff !important;
+    border: 1px solid #0369a1 !important;
   }}
   /* ---- Tabs: pill style = secondary button (all labels visible, no black fill) ---- */
   .stApp .stTabs [data-baseweb="tab-list"],
