@@ -13,6 +13,9 @@ from it_knowledge_seed import IT_DOCUMENTS
 # Course FAQ + IT reference chunks (single table)
 ALL_KB_DOCUMENTS: list[tuple[str, str, str, str]] = COURSE_META_DOCUMENTS + IT_DOCUMENTS
 
+# Bump when seed *bodies* change (row count alone does not trigger refresh).
+KB_CONTENT_VERSION = 2
+
 
 def knowledge_db_path() -> Path:
     return Path(__file__).resolve().parent / "data" / "it_knowledge.sqlite"
@@ -40,12 +43,14 @@ def ensure_database() -> Path:
         )
         n = conn.execute("SELECT COUNT(*) FROM it_docs").fetchone()[0]
         expected = len(ALL_KB_DOCUMENTS)
-        if n != expected:
+        uv = int(conn.execute("PRAGMA user_version").fetchone()[0])
+        if n != expected or uv < KB_CONTENT_VERSION:
             conn.execute("DELETE FROM it_docs")
             conn.executemany(
                 "INSERT INTO it_docs (title, category, body, source) VALUES (?,?,?,?)",
                 ALL_KB_DOCUMENTS,
             )
+            conn.execute(f"PRAGMA user_version = {KB_CONTENT_VERSION}")
             conn.commit()
     finally:
         conn.close()

@@ -172,8 +172,10 @@ COURSE_META_DOCUMENTS: list[tuple[str, str, str, str]] = [
         "Course_meta",
         "**Hallucination** (in LLMs) means the model generates **plausible-sounding content that is false, unsupported, or not grounded** in the evidence it was given—e.g. **invented citations**, wrong dates, or details that **look** factual but are not. "
         "It is different from **I don’t know** (refusal) or clearly hedged uncertainty. "
-        "Mitigations include **RAG** (retrieve real documents before answering), **tools**, **citations to verified sources**, and **human review** for high-stakes use. "
-        "In this CSV lab, case **O01** illustrates **citation-style** hallucination; case **H04** is about **sycophancy** (agreeing with a false premise)—related to alignment failures, **not** the definition of hallucination.",
+        "**Why it happens:** models learn statistical patterns over text; without **external grounding**, they can **confabulate** fluent answers that mix truth-like form with incorrect substance (**parametric** memory is not a verified database). "
+        "**Mitigations** include **RAG** (retrieve real documents before answering), **tools** (calculators, APIs), **citations to verified sources**, **uncertainty calibration** (“I’m not sure”), and **human review** for high-stakes use. "
+        "Poor retrieval (wrong chunks) can still produce bad answers—**retrieval quality** and **attribution** matter. "
+        "In this CSV lab, case **O01** illustrates **citation-style** hallucination; case **H04** is about **sycophancy** (agreeing with a false premise)—related to alignment failures, **not** the textbook definition of hallucination.",
         "curated",
     ),
     (

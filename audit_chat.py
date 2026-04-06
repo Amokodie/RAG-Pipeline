@@ -356,7 +356,8 @@ def merge_meta_kb_hits(kb: Any | None, query: str, it_hits: list, *, top_k: int)
             "Student_support counseling team group extension mental health imposter career English accessibility"
         )
     try:
-        boost = kb.query(boost_q, top_k=8)
+        boost_n = 12 if is_glossary_concept_query(query) else 8
+        boost = kb.query(boost_q, top_k=boost_n)
     except Exception:
         return it_hits[:top_k]
     by_title: dict[str, Any] = {}
@@ -421,10 +422,30 @@ def format_it_kb_for_prompt(hits: list) -> str:
     return "\n\n".join(parts)
 
 
-def format_it_kb_markdown(hits: list) -> str:
-    """Readable markdown for offline replies."""
+def format_it_kb_markdown(hits: list, *, detailed: bool = False) -> str:
+    """Readable markdown for offline replies. *detailed* uses headings per passage (for glossary-style questions)."""
     if not hits:
         return "*No close matches in the local IT knowledge base.*"
+    if detailed:
+        lines = [
+            "**Knowledge base (IT + course FAQ)** — *For definitions, read **Course_meta** and **AI/ML** sections first.*",
+            "",
+        ]
+        for i, h in enumerate(hits):
+            cat = getattr(h, "category", "")
+            if cat == "Course_meta":
+                tag = "course / site FAQ"
+            elif cat == "Student_support":
+                tag = "student support (general guidance)"
+            else:
+                tag = cat
+            lines.append(f"### {h.title}")
+            lines.append(f"*{tag} · retrieval match {h.score:.2f}*  ")
+            lines.append("")
+            lines.append(h.body)
+            if i < len(hits) - 1:
+                lines.extend(["", "---", ""])
+        return "\n".join(lines).rstrip()
     lines = ["**Knowledge base (IT + course FAQ):**"]
     for h in hits:
         cat = getattr(h, "category", "")
@@ -472,9 +493,10 @@ def offline_multisource_answer(
 ) -> str:
     """Audit row + IT KB + note when the question is likely out of audit context."""
     row = df.iloc[row_index]
-    kb_md = format_it_kb_markdown(it_hits)
+    gloss = is_glossary_concept_query(user_query)
+    kb_md = format_it_kb_markdown(it_hits, detailed=gloss and bool(it_hits))
 
-    if is_glossary_concept_query(user_query) and it_hits:
+    if gloss and it_hits:
         audit_block = (
             f"**Retrieved row:** `{case_id}` · *{row['category']}* · {row['subcategory']}\n\n"
             f"*Retrieval:* {method}\n\n"
@@ -486,6 +508,12 @@ def offline_multisource_answer(
             "> **Definition-style question:** The **knowledge base** below answers *what the term means*. "
             "The audit row is a **related teaching example** from the CSV (e.g. H04 is about **sycophancy**, "
             "not the textbook definition of **hallucination**).\n\n"
+            "**How this answer is organized (detailed):**\n\n"
+            "- **Passages below** — Full text from the local KB, grouped by title (read **Course_meta** / **AI/ML** first).\n"
+            "- **Definition** — What the term means in plain language.\n"
+            "- **Why models can err** — Ungrounded generation, parametric memory, weak or wrong retrieval.\n"
+            "- **Mitigations** — RAG, tools, citations, calibration, human review.\n"
+            "- **Lab row (last section)** — One CSV case as an **example**; compare to **O01** (citation-style) vs **H04** (sycophancy) in the meta passages.\n\n"
             + kb_md
             + "\n\n---\n\n**Related alignment-audit row (lab example):**\n\n"
             + audit_block
@@ -605,6 +633,18 @@ def openai_multisource_answer(
         else "Wikipedia supplement: not provided."
     )
 
+    glossary_q = is_glossary_concept_query(user_query)
+    length_style = (
+        "For this **definition / concept** question: write a **detailed, teaching-style** answer. "
+        "Use markdown **###** subheadings, e.g. **### Definition**, **### Why models can produce ungrounded text**, "
+        "**### Mitigations (RAG, tools, oversight)**, **### Related concepts**, **### How this relates to the lab CSV** (audit row as *optional example only*). "
+        "Synthesize **IT_KNOWLEDGE_BASE** first; add careful general CS/ML background where the KB is thin. "
+        "Aim for **substantial depth** (several paragraphs total), not a single short paragraph. "
+        "Do not invent specific paper titles, CVE IDs, or product guarantees."
+        if glossary_q
+        else "Keep answers structured (short paragraphs or bullets), friendly, and concise unless the user asks for depth."
+    )
+
     system = (
         "You are a teaching assistant for a **foundation models & alignment** lab, plus general **IT/CS** support.\n\n"
         f"{kb_status}\n{wiki_status}\n\n"
@@ -613,13 +653,13 @@ def openai_multisource_answer(
         "2) IT_KNOWLEDGE_BASE — short curated passages from a local database (networking, security, cloud, DevOps, ML/RAG, etc.).\n"
         "3) WIKIPEDIA_SUPPLEMENT — optional English Wikipedia **lead** section (only when provided).\n\n"
         f"Guidance: {weak_note}\n\n"
+        f"**Length and structure:** {length_style}\n\n"
         "- If the user asks something **not covered** by the audit row, answer using **IT_KNOWLEDGE_BASE** when it helps, "
         "and **sound general IT knowledge** at an undergraduate level when the DB does not contain a specific answer.\n"
         "- If **WIKIPEDIA_SUPPLEMENT** is non-empty, you may use it as **general background** and **explicitly say** it comes from Wikipedia. "
         "It is **not** the instructor’s authoritative answer—students should verify for exams.\n"
         "- Clearly separate: what comes from the **audit** vs **IT KB** vs **Wikipedia** vs **general reasoning** when it matters.\n"
-        "- Do not fabricate citations to real papers or exact CVE numbers unless they appear in the provided text.\n"
-        "- Keep answers structured (short paragraphs or bullets), friendly, and concise.\n\n"
+        "- Do not fabricate citations to real papers or exact CVE numbers unless they appear in the provided text.\n\n"
         "--- RETRIEVED_ALIGNMENT_AUDIT_ROW ---\n"
         f"{audit_context_block}\n\n"
         "--- IT_KNOWLEDGE_BASE ---\n"
@@ -628,6 +668,7 @@ def openai_multisource_answer(
         f"{wikipedia_block or '(none)'}\n"
     )
     client = OpenAI(api_key=api_key)
+    max_out = 1900 if glossary_q else 1100
     resp = client.chat.completions.create(
         model=model,
         messages=[
@@ -635,7 +676,7 @@ def openai_multisource_answer(
             {"role": "user", "content": user_query},
         ],
         temperature=0.35,
-        max_tokens=900,
+        max_tokens=max_out,
     )
     return (resp.choices[0].message.content or "").strip()
 
@@ -679,7 +720,11 @@ def build_ask_ai_pack(
         grounded,
         sentence_attribution_block=sentence_attribution_block,
     )
-    tk = max(it_kb_top_k, 10) if should_boost_kb_recall(query) else it_kb_top_k
+    if should_boost_kb_recall(query):
+        floor = 14 if is_glossary_concept_query(query) else 10
+        tk = max(it_kb_top_k, floor)
+    else:
+        tk = it_kb_top_k
     it_hits = _hits_from_kb(kb, query, top_k=tk)
     it_hits = merge_meta_kb_hits(kb, query, it_hits, top_k=tk)
     return AskAiPack(

@@ -226,7 +226,11 @@ IT_DOCUMENTS: list[tuple[str, str, str, str]] = [
     (
         "Hallucination in LLMs",
         "AI/ML",
-        "Models can produce fluent but false statements. Mitigations include retrieval, tool use, citation to sources, uncertainty calibration, and human oversight for high-stakes domains.",
+        "**Hallucination** here means **confident, fluent outputs that are wrong or ungrounded**—not optical or psychiatric “hallucinations.” "
+        "Causes include **lack of retrieval**, **stale or parametric “facts”** memorized from training, **prompt pressure** to sound certain, and **context length** limits that drop evidence. "
+        "**RAG** reduces *pure* guessing by conditioning on retrieved text, but **wrong or empty retrieval** can still mislead the model. "
+        "Other mitigations: **tool use** (lookup, compute), **explicit citations**, **verification loops**, and **human oversight** for medicine, law, safety, and finance. "
+        "Distinguish from **sycophancy** (agreeing with the user) and **bias**—those are separate alignment issues that may co-occur.",
         "curated",
     ),
     (
