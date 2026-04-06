@@ -105,6 +105,12 @@ def main() -> None:
         layout="wide",
     )
 
+    st.title("AeroFleet X200 — Battery Cooling Technical Databank")
+    st.caption(
+        "Grounded engineering support · Corpus D01–D10 · FAISS + sentence embeddings · Metadata-aware CONTEXT "
+        "(status / authority) · D02>D03 · D08 non-binding · D07 safety merge · HHH-aligned guardrail when using OpenAI."
+    )
+
     _base = Path(__file__).resolve().parent
     _root = _base.parent
     render_rag_explainer_block(
@@ -115,12 +121,6 @@ def main() -> None:
             "documents are chunked and embedded so retrieval supplies **grounded** context, shrinking reliance on the "
             "model’s parametric memory alone (the **knowledge boundary** problem)."
         ),
-    )
-
-    st.title("AeroFleet X200 — Battery Cooling Technical Databank")
-    st.caption(
-        "Grounded engineering support · Corpus D01–D10 · FAISS + sentence embeddings · Metadata-aware CONTEXT "
-        "(status / authority) · D02>D03 · D08 non-binding · D07 safety merge · HHH-aligned guardrail when using OpenAI."
     )
 
     try:

@@ -386,16 +386,6 @@ def main() -> None:
     if "ui_theme" not in st.session_state:
         st.session_state.ui_theme = "light"
 
-    _repo = Path(__file__).resolve().parent
-    render_rag_explainer_block(
-        _repo,
-        _repo / "rag_session8_classroom_exercise",
-        caption=(
-            "Explainer: **Index → Retrieve → Generate** — grounding the model in retrieved documents "
-            "(non-parametric knowledge) before generation, reducing reliance on parametric memory alone."
-        ),
-    )
-
     data_path = Path(__file__).resolve().parent / "session7_alignment_audit_package" / "data" / "session7_alignment_audit_dataset.csv"
     path_str = str(data_path)
 
@@ -467,6 +457,16 @@ def main() -> None:
         "and **retrieves** top matches by **cosine similarity** before showing **grounded** answers. "
         "Production systems swap TF‑IDF for **dense embeddings** + a **vector index**, but the control "
         "flow is the same: **retrieve → condition → generate**."
+    )
+
+    _repo = Path(__file__).resolve().parent
+    render_rag_explainer_block(
+        _repo,
+        _repo / "rag_session8_classroom_exercise",
+        caption=(
+            "Explainer: **Index → Retrieve → Generate** — grounding the model in retrieved documents "
+            "(non-parametric knowledge) before generation, reducing reliance on parametric memory alone."
+        ),
     )
 
     tab_overview, tab_analysis, tab_case, tab_live, tab_ask_ai, tab_advanced, tab_concepts = st.tabs(
