@@ -44,6 +44,11 @@ from grounded_responses import REVISED_RESPONSES
 from llm_grounding import build_context_block
 from rag_pedagogy import render_pedagogy_hallucination_lab
 from rag_session8_classroom_exercise.rag_media import render_rag_explainer_block
+from free_web_supplement import (
+    append_wikipedia_to_answer,
+    format_wikipedia_supplement_markdown,
+    fetch_wikipedia_intro,
+)
 
 # Short pedagogical notes: what failed, how retrieval + policy text mitigates it
 CASE_ANALYSIS: dict[str, dict[str, str]] = {
@@ -173,6 +178,12 @@ def cached_it_kb_retriever():
     return r
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def _cached_wikipedia_intro(query: str) -> tuple[str | None, str | None]:
+    """English Wikipedia lead via MediaWiki API (cached ~30 min per query)."""
+    return fetch_wikipedia_intro(query)
+
+
 def rag_prompt_template(case_id: str, category: str, subcategory: str, user_prompt: str, revised: str) -> str:
     return (
         "[SYSTEM] You are a teaching assistant. Answer only using the RETRIEVED_CONTEXT. "
@@ -200,6 +211,17 @@ def _render_ask_ai_tab(df: pd.DataFrame, retriever: TfidfRetriever, path_str: st
             "- Questions like *“what is this site?”* or *“what is RAG?”* pull **Course_meta** chunks from the KB so "
             "you are not stuck with a random audit row.\n"
             "- **3D** below (optional) mirrors the **Analysis & 3D** tab: LSA projection for visualization only."
+        )
+
+    with st.expander("Hallucination vs RAG-grounded answer (example)", expanded=False):
+        st.markdown(
+            "- **Hallucinated answer:** plausible text with **no guarantee** it matches your course notes or the CSV — "
+            "the model may invent details, citations, or app behavior.\n"
+            "- **RAG-grounded answer:** built from **retrieved** alignment-audit row + **local IT knowledge base** chunks; "
+            "when you enable **OpenAI**, the model must still use that context. **Optional Wikipedia** adds a free "
+            "third-party intro (labeled; not official course material).\n"
+            "- If answers feel off-topic, try rephrasing toward **tabs**, **RAG**, or a **case ID** (e.g. H01); "
+            "weak retrieval is flagged in the reply when relevant."
         )
 
     if "ask_ai_messages" not in st.session_state:
@@ -257,6 +279,11 @@ def _render_ask_ai_tab(df: pd.DataFrame, retriever: TfidfRetriever, path_str: st
         key="ask_ai_model",
         disabled=not use_chat_llm,
     )
+    use_wikipedia = st.checkbox(
+        "Include free English Wikipedia intro (needs internet; third-party, not official course text)",
+        value=False,
+        key="ask_ai_use_wikipedia",
+    )
 
     for msg in st.session_state.ask_ai_messages:
         with st.chat_message(msg["role"]):
@@ -298,6 +325,15 @@ def _render_ask_ai_tab(df: pd.DataFrame, retriever: TfidfRetriever, path_str: st
 
     if submitted and user_q.strip():
         prompt = user_q.strip()
+        wiki_md = ""
+        wiki_for_llm = ""
+        if use_wikipedia:
+            with st.spinner("Wikipedia (optional)…"):
+                wt, wx = _cached_wikipedia_intro(prompt)
+                wiki_md = format_wikipedia_supplement_markdown(wt, wx)
+                if wt and wx:
+                    wiki_for_llm = f"Article: {wt}\n\n{wx}"
+
         with st.spinner("Retrieving audit row + IT knowledge base…"):
             pack = build_ask_ai_pack(df, retriever, hybrid_chat, kb_retriever, prompt)
             row = df.iloc[pack.row_idx]
@@ -343,7 +379,10 @@ def _render_ask_ai_tab(df: pd.DataFrame, retriever: TfidfRetriever, path_str: st
                         it_kb_block=it_kb_text,
                         audit_weak=pack.audit_weak,
                         it_kb_used=it_kb_used,
+                        wikipedia_block=wiki_for_llm,
                     )
+                    if wiki_md:
+                        reply = append_wikipedia_to_answer(reply, wiki_md)
             except Exception as ex:
                 reply = (
                     f"**OpenAI error:** `{ex}`\n\n---\n\n"
@@ -357,6 +396,7 @@ def _render_ask_ai_tab(df: pd.DataFrame, retriever: TfidfRetriever, path_str: st
                         pack.audit_weak,
                         pack.it_hits,
                         user_query=prompt,
+                        wiki_md=wiki_md,
                     )
                 )
         else:
@@ -370,6 +410,7 @@ def _render_ask_ai_tab(df: pd.DataFrame, retriever: TfidfRetriever, path_str: st
                 pack.audit_weak,
                 pack.it_hits,
                 user_query=prompt,
+                wiki_md=wiki_md,
             )
             if use_chat_llm and not chat_api_key.strip():
                 reply += "\n\n*Enable OpenAI by adding an API key above.*"

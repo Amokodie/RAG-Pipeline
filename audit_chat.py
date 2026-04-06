@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
+from free_web_supplement import append_wikipedia_to_answer
 from grounded_responses import REVISED_RESPONSES
 from llm_grounding import build_context_block
 
@@ -467,6 +468,7 @@ def offline_multisource_answer(
     it_hits: list,
     *,
     user_query: str = "",
+    wiki_md: str = "",
 ) -> str:
     """Audit row + IT KB + note when the question is likely out of audit context."""
     row = df.iloc[row_index]
@@ -480,7 +482,7 @@ def offline_multisource_answer(
             f"---\n*Original audit prompt:* {str(row['user_prompt'])[:400]}"
             f"{'…' if len(str(row['user_prompt'])) > 400 else ''}"
         )
-        return (
+        out = (
             "> **Definition-style question:** The **knowledge base** below answers *what the term means*. "
             "The audit row is a **related teaching example** from the CSV (e.g. H04 is about **sycophancy**, "
             "not the textbook definition of **hallucination**).\n\n"
@@ -495,6 +497,7 @@ def offline_multisource_answer(
                 else "*Audit match is moderate — still use KB above for definitions.*"
             )
         )
+        return append_wikipedia_to_answer(out, wiki_md)
 
     if is_app_navigation_query(user_query) and it_hits and not is_glossary_concept_query(user_query):
         audit_block = (
@@ -504,7 +507,7 @@ def offline_multisource_answer(
             f"---\n*Original audit prompt:* {str(row['user_prompt'])[:400]}"
             f"{'…' if len(str(row['user_prompt'])) > 400 else ''}"
         )
-        return (
+        out = (
             "> **App / navigation question:** The **knowledge base** below describes **tabs, sidebar, and what each area does**. "
             "The alignment-audit row at the end is **optional** CSV context—not a substitute for the UI guides.\n\n"
             + kb_md
@@ -513,6 +516,7 @@ def offline_multisource_answer(
             + "\n\n"
             + f"**Audit relevance score:** {audit_score:.3f}"
         )
+        return append_wikipedia_to_answer(out, wiki_md)
 
     base = offline_markdown_answer(df, row_index, case_id, instructor_text, method)
     extra = [
@@ -528,7 +532,7 @@ def offline_multisource_answer(
             "> *The closest alignment-audit row may not fully answer your question. "
             "Below are passages from the **local IT knowledge base** (other sources) to help.*",
         )
-    return base + "\n".join(extra)
+    return append_wikipedia_to_answer(base + "\n".join(extra), wiki_md)
 
 
 def openai_conversational_answer(
@@ -559,6 +563,7 @@ def openai_multisource_answer(
     it_kb_block: str,
     audit_weak: bool,
     it_kb_used: bool,
+    wikipedia_block: str = "",
 ) -> str:
     """Uses audit + IT KB; allows general IT explanation when audit is weak or question is broad."""
     try:
@@ -594,23 +599,33 @@ def openai_multisource_answer(
         if it_kb_used
         else "IT knowledge base: no strong lexical matches; still answer with sound general IT knowledge when needed."
     )
+    wiki_status = (
+        "Wikipedia supplement: present (third-party encyclopedia — label clearly; not official course material)."
+        if wikipedia_block.strip()
+        else "Wikipedia supplement: not provided."
+    )
 
     system = (
         "You are a teaching assistant for a **foundation models & alignment** lab, plus general **IT/CS** support.\n\n"
-        f"{kb_status}\n\n"
+        f"{kb_status}\n{wiki_status}\n\n"
         "You are given:\n"
         "1) RETRIEVED_ALIGNMENT_AUDIT_ROW — one row from a small CSV lab (case IDs like H01, O01, B01).\n"
-        "2) IT_KNOWLEDGE_BASE — short curated passages from a local database (networking, security, cloud, DevOps, ML/RAG, etc.).\n\n"
+        "2) IT_KNOWLEDGE_BASE — short curated passages from a local database (networking, security, cloud, DevOps, ML/RAG, etc.).\n"
+        "3) WIKIPEDIA_SUPPLEMENT — optional English Wikipedia **lead** section (only when provided).\n\n"
         f"Guidance: {weak_note}\n\n"
         "- If the user asks something **not covered** by the audit row, answer using **IT_KNOWLEDGE_BASE** when it helps, "
         "and **sound general IT knowledge** at an undergraduate level when the DB does not contain a specific answer.\n"
-        "- Clearly separate: what comes from the **audit** vs **IT KB** vs **general reasoning** when it matters.\n"
+        "- If **WIKIPEDIA_SUPPLEMENT** is non-empty, you may use it as **general background** and **explicitly say** it comes from Wikipedia. "
+        "It is **not** the instructor’s authoritative answer—students should verify for exams.\n"
+        "- Clearly separate: what comes from the **audit** vs **IT KB** vs **Wikipedia** vs **general reasoning** when it matters.\n"
         "- Do not fabricate citations to real papers or exact CVE numbers unless they appear in the provided text.\n"
         "- Keep answers structured (short paragraphs or bullets), friendly, and concise.\n\n"
         "--- RETRIEVED_ALIGNMENT_AUDIT_ROW ---\n"
         f"{audit_context_block}\n\n"
         "--- IT_KNOWLEDGE_BASE ---\n"
-        f"{it_kb_block or '(empty)'}\n"
+        f"{it_kb_block or '(empty)'}\n\n"
+        "--- WIKIPEDIA_SUPPLEMENT ---\n"
+        f"{wikipedia_block or '(none)'}\n"
     )
     client = OpenAI(api_key=api_key)
     resp = client.chat.completions.create(
