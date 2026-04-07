@@ -28,12 +28,17 @@ from visualization import (
     figure_3d_chunks_and_query,
     figure_category_radar,
     figure_chunk_length_bars,
+    figure_chunking_animation,
+    figure_hallucination_timeline,
     figure_lsa_variance,
     figure_margin_bar,
+    figure_retrieval_animation,
+    figure_retrieval_gauge,
     figure_sankey_retrieval,
     figure_similarity_heatmap,
     figure_softmax_mass,
 )
+from hallucination_kb import match_hallucination_kb
 from audit_chat import (
     build_ask_ai_pack,
     format_it_kb_for_prompt,
@@ -193,9 +198,233 @@ def rag_prompt_template(case_id: str, category: str, subcategory: str, user_prom
     )
 
 
+# ── Hallucination simulation stubs (offline demo, no API needed) ─────────
+# Each entry: (hallucinated_answer_text, [list_of_fabricated_claims])
+_HALLUCINATION_STUBS: list[tuple[str, list[str]]] = [
+    (
+        "According to a landmark study published in **Nature Machine Intelligence** (2022) by "
+        "researchers at MIT and Stanford, large language models achieve approximately **94.3% "
+        "factual accuracy** when fine-tuned on curated corpora above 175 billion parameters. "
+        "Lead author Dr. Jennifer Hartwell confirmed in her follow-up paper that "
+        "chain-of-thought prompting alone eliminates hallucination in over **81%** of knowledge "
+        "queries. The **HalluBench 3.0** benchmark (released Q2 2023) independently validates "
+        "these findings across 47 language pairs.",
+        [
+            "'Nature Machine Intelligence (2022)' — fabricated journal + year",
+            "'MIT and Stanford' joint study — fabricated institutional affiliation",
+            "'94.3% factual accuracy' — fabricated statistic with false precision",
+            "'Dr. Jennifer Hartwell' — fabricated researcher name",
+            "'81% elimination' — fabricated percentage, no source",
+            "'HalluBench 3.0' — fabricated benchmark dataset",
+        ],
+    ),
+    (
+        "RAG was formally introduced by the **OpenAI alignment team in 2018**, as described in "
+        "the seminal paper *'Retrieval as a Foundation for Safe AI'* (arxiv:1804.XXXXX). "
+        "The original architecture used **GPT-1** as the generator with a **BM42** retriever "
+        "and demonstrated a **73% reduction** in hallucination on the **TruthBench-v2** dataset. "
+        "All major LLM vendors have since adopted this exact architecture unchanged.",
+        [
+            "'OpenAI alignment team in 2018' — RAG was introduced by Facebook/Meta in 2020",
+            "'arxiv:1804.XXXXX' — fabricated arxiv ID",
+            "'GPT-1 as generator' — historically inaccurate",
+            "'BM42 retriever' — BM42 does not exist (BM25 is real)",
+            "'73% reduction on TruthBench-v2' — fabricated benchmark + statistic",
+        ],
+    ),
+    (
+        "The **European AI Regulation Act (2021)** mandates that all LLMs deployed in the EU "
+        "must achieve a **hallucination rate below 3%** as measured by the ISO/IEC 42001-7 "
+        "standard. Non-compliance carries fines of up to **€50M or 8% of global revenue**. "
+        "Anthropic, OpenAI, and Google have all received preliminary compliance certificates "
+        "from the **EU AI Safety Agency** (Brussels) as of March 2024.",
+        [
+            "'European AI Regulation Act (2021)' — the EU AI Act was proposed in 2021 but "
+            "does not set a 3% hallucination rate threshold",
+            "'ISO/IEC 42001-7 standard' — fabricated standard sub-number",
+            "'€50M or 8% of global revenue' — actual EU AI Act fines differ; 8% figure "
+            "conflates GDPR rules",
+            "'EU AI Safety Agency' — this specific agency name is fabricated",
+        ],
+    ),
+]
+
+
+import random as _random
+
+
+def _simulate_hallucinated_answer(query: str) -> tuple[str, list[str]]:
+    """
+    Return (hallucinated_answer, list_of_fabricated_claims) for any query.
+    Uses a seeded random pick from stubs so results are stable per query.
+    """
+    seed = sum(ord(c) for c in query) % len(_HALLUCINATION_STUBS)
+    answer, fabrications = _HALLUCINATION_STUBS[seed]
+    # Personalise: inject a query keyword into the first sentence for realism
+    kw = query.split()[0] if query.split() else "this topic"
+    answer = answer.replace(
+        "large language models",
+        f"large language models (in the context of *{kw}*)",
+        1,
+    )
+    return answer, fabrications
+
+
+def _estimate_faithfulness(answer: str, context_chunks: list[str]) -> float:
+    """
+    Offline faithfulness proxy: fraction of answer word-tokens that appear
+    anywhere in the retrieved context.  Range [0, 1].
+    """
+    import re as _re
+    stopwords = {"the", "a", "an", "is", "in", "of", "and", "or", "to", "it",
+                 "that", "this", "with", "for", "on", "are", "was", "be", "by"}
+    def _tok(t: str) -> set[str]:
+        return {w for w in _re.findall(r"[a-z0-9]+", t.lower())
+                if w not in stopwords and len(w) > 1}
+    a_words = _tok(answer)
+    if not a_words:
+        return 0.0
+    ctx_words: set[str] = set()
+    for chunk in context_chunks:
+        ctx_words |= _tok(chunk)
+    return len(a_words & ctx_words) / len(a_words)
+
+
+def _generate_related_questions(query: str, hits: list, kb_match: dict | None) -> list[str]:
+    """
+    Generate up to 4 follow-up question suggestions based on retrieved chunks
+    and whether a hallucination-KB entry was matched.
+    """
+    questions: list[str] = []
+    if hits:
+        top = hits[0]
+        cat = getattr(top, "category", "")
+        cid = getattr(top, "case_id", "")
+        cat_qs = {
+            "Honesty": [
+                f"Why does case {cid} count as a hallucination failure?",
+                "How does RAG prevent fabricated citations?",
+            ],
+            "Safety": [
+                f"What safety failure does case {cid} demonstrate?",
+                "How does retrieval block harmful compliance?",
+            ],
+            "Helpfulness": [
+                "What is sycophancy and how does it appear in case H04?",
+                f"How does case {cid} illustrate factual drift?",
+            ],
+            "Bias": [
+                "What bias types appear across the alignment audit?",
+                "How does RAG enforce fair-hiring norms?",
+            ],
+        }
+        questions.extend(cat_qs.get(cat, [
+            f"What does case {cid} reveal about model alignment?",
+            "How does retrieval change the model's answer quality?",
+        ]))
+
+    if kb_match:
+        tags = kb_match.get("tags", [])
+        if "rag" in tags:
+            questions.append("Can RAG still hallucinate?")
+        if "rlhf" in tags or "dpo" in tags:
+            questions.append("What is DPO and how does it differ from RLHF?")
+        if "embedding" in tags or "chunking" in tags:
+            questions.append("What is cosine similarity and why is it used?")
+
+    general = [
+        "What are intrinsic vs extrinsic hallucination?",
+        "What real-world hallucination incidents have occurred?",
+        "What is faithfulness in RAG evaluation?",
+        "What is Constitutional AI?",
+        "What techniques beyond RAG reduce hallucination?",
+        "What is the RAGAS framework?",
+        "What is parametric vs non-parametric knowledge?",
+    ]
+    seed = sum(ord(c) for c in query) % max(1, len(general))
+    _random.seed(seed)
+    needed = max(0, 4 - len(questions))
+    questions += _random.sample(general, min(needed, len(general)))
+    return questions[:4]
+
+
+def _render_comparison(comparison: dict) -> None:
+    """Side-by-side RAG vs hallucinated answer display."""
+    st.markdown("---")
+    st.markdown("### RAG vs Ungrounded — Side-by-Side Comparison")
+    st.caption(f"Query: *{comparison.get('query', '')}*")
+    col_hal, col_rag = st.columns(2)
+    with col_hal:
+        st.markdown("#### Ungrounded (Normal LLM)")
+        st.error(
+            "**What the model might say without grounding:**\n\n"
+            + comparison.get("hallucinated_answer", "")
+        )
+        fabrications = comparison.get("hallucinated_fabrications", [])
+        if fabrications:
+            with st.expander("Hallucination analysis — what was fabricated", expanded=True):
+                for f in fabrications:
+                    st.markdown(f"- {f}")
+    with col_rag:
+        st.markdown("#### RAG-Grounded")
+        st.success(
+            "**Answer built from retrieved context:**\n\n"
+            + comparison.get("rag_answer", "")
+        )
+        evidence = comparison.get("hit_evidence", [])
+        if evidence:
+            with st.expander("Retrieval evidence", expanded=True):
+                ev_rows = [{"case_id": e["case_id"], "cosine": round(e["score"], 4)}
+                           for e in evidence]
+                st.dataframe(pd.DataFrame(ev_rows), use_container_width=True, hide_index=True)
+                # Mini bar chart of scores
+                scores = [e["score"] for e in evidence]
+                case_ids = [e["case_id"] for e in evidence]
+                st.bar_chart(
+                    pd.DataFrame({"score": scores}, index=case_ids),
+                    horizontal=True,
+                )
+    st.markdown("---")
+
+
 def _render_ask_ai_tab(df: pd.DataFrame, retriever: TfidfRetriever, path_str: str) -> None:
-    """Ask AI UI; failures are caught in main() so other tabs still run."""
+    """Ask AI UI — RAG vs Normal toggle, hallucination KB, comparison, related questions."""
     st.subheader("Ask about this audit")
+
+    # ── Area 1: RAG vs Normal LLM mode toggle ────────────────────────────
+    mode = st.radio(
+        "Answer mode",
+        ["RAG-Grounded ✅", "Normal LLM — Hallucination Demo ⚠️"],
+        horizontal=True,
+        key="rag_mode_toggle",
+        help=(
+            "**RAG-Grounded**: answer built from retrieved alignment-audit rows + IT KB.  \n"
+            "**Normal LLM**: simulates what a model might say *without* grounding — "
+            "contains deliberate fabrications for educational contrast."
+        ),
+    )
+    use_rag = mode.startswith("RAG")
+
+    # ── Handle quick_query from Related Questions buttons ────────────────
+    quick_submitted = st.session_state.pop("quick_submitted", False)
+    quick_query = st.session_state.pop("quick_query", "")
+
+    # ── Hallucination KB explainer (from last query) ─────────────────────
+    kb_match = st.session_state.get("kb_match_result")
+    if kb_match:
+        with st.expander("📚 Hallucination Explainer — direct answer from course knowledge base",
+                         expanded=True):
+            st.info(f"**{kb_match['question']}**\n\n{kb_match['answer']}")
+
+    # ── Side-by-side comparison toggle ───────────────────────────────────
+    comparison = st.session_state.get("last_comparison")
+    if comparison:
+        if st.checkbox(
+            "Show RAG vs Hallucination side-by-side comparison",
+            key="show_both_comparison",
+        ):
+            _render_comparison(comparison)
+
     st.markdown(
         "Answers combine **(1)** the closest **alignment-audit** CSV row, **(2)** a **SQLite knowledge base** "
         "(IT topics + **Course_meta**: site FAQ, **tab/navigation guides** for each page, definitions + **Student_support**), "
@@ -220,6 +449,8 @@ def _render_ask_ai_tab(df: pd.DataFrame, retriever: TfidfRetriever, path_str: st
             "- **RAG-grounded answer:** built from **retrieved** alignment-audit row + **local IT knowledge base** chunks; "
             "when you enable **OpenAI**, the model must still use that context. **Optional Wikipedia** adds a free "
             "third-party intro (labeled; not official course material).\n"
+            "- For **“what is hallucination?”**, the app now puts a **Direct answer** first, then related passages "
+            "(RAG may appear as **mitigation**—that is not a second “fake” answer).\n"
             "- If answers feel off-topic, try rephrasing toward **tabs**, **RAG**, or a **case ID** (e.g. H01); "
             "weak retrieval is flagged in the reply when relevant."
         )
@@ -289,6 +520,19 @@ def _render_ask_ai_tab(df: pd.DataFrame, retriever: TfidfRetriever, path_str: st
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
+    # ── Area 5: Related questions ─────────────────────────────────────────
+    related = st.session_state.get("related_questions", [])
+    if related:
+        st.markdown("**Related questions — click to ask:**")
+        rq_cols = st.columns(min(4, len(related)))
+        for i, (col, rq) in enumerate(zip(rq_cols, related)):
+            with col:
+                if st.button(rq, key=f"rq_{i}_{hash(rq) % 99999}",
+                             use_container_width=True):
+                    st.session_state["quick_query"] = rq
+                    st.session_state["quick_submitted"] = True
+                    st.rerun()
+
     plot_payload = st.session_state.get("ask_ai_plot")
     if plot_payload and st.checkbox(
         "Show interactive **3D LSA** plot for the last question (same idea as Analysis & 3D tab)",
@@ -318,13 +562,20 @@ def _render_ask_ai_tab(df: pd.DataFrame, retriever: TfidfRetriever, path_str: st
     with st.form("ask_ai_form", clear_on_submit=True):
         user_q = st.text_input(
             "Your question",
-            placeholder="e.g. What fails in case O01?  ·  hiring bias examples",
+            placeholder="e.g. What fails in case O01?  ·  What is hallucination?  ·  hiring bias",
             label_visibility="collapsed",
         )
         submitted = st.form_submit_button("Send")
 
+    # ── Process query (from form OR related-question button) ──────────────
+    active_prompt = ""
     if submitted and user_q.strip():
-        prompt = user_q.strip()
+        active_prompt = user_q.strip()
+    elif quick_submitted and quick_query:
+        active_prompt = quick_query.strip()
+
+    if active_prompt:
+        prompt = active_prompt
         wiki_md = ""
         wiki_for_llm = ""
         if use_wikipedia:
@@ -334,6 +585,11 @@ def _render_ask_ai_tab(df: pd.DataFrame, retriever: TfidfRetriever, path_str: st
                 if wt and wx:
                     wiki_for_llm = f"Article: {wt}\n\n{wx}"
 
+        # ── KB match check (always, regardless of mode) ───────────────
+        kb_hit = match_hallucination_kb(prompt)
+        st.session_state["kb_match_result"] = kb_hit
+
+        # ── Always generate RAG answer (needed for comparison store) ──
         with st.spinner("Retrieving audit row + IT knowledge base…"):
             pack = build_ask_ai_pack(df, retriever, hybrid_chat, kb_retriever, prompt)
             row = df.iloc[pack.row_idx]
@@ -341,7 +597,6 @@ def _render_ask_ai_tab(df: pd.DataFrame, retriever: TfidfRetriever, path_str: st
             if hybrid_chat is not None and hybrid_chat.dense.available:
                 try:
                     from attribution import attribute_prompt_and_response, format_attribution_for_llm_context
-
                     attr_rows = attribute_prompt_and_response(
                         hybrid_chat.dense.model,
                         prompt.strip(),
@@ -353,17 +608,11 @@ def _render_ask_ai_tab(df: pd.DataFrame, retriever: TfidfRetriever, path_str: st
                         attr_block = format_attribution_for_llm_context(attr_rows)
                 except Exception:
                     pass
-
             if attr_block:
                 pack = build_ask_ai_pack(
-                    df,
-                    retriever,
-                    hybrid_chat,
-                    kb_retriever,
-                    prompt,
+                    df, retriever, hybrid_chat, kb_retriever, prompt,
                     sentence_attribution_block=attr_block,
                 )
-
             grounded = REVISED_RESPONSES.get(pack.case_id, "—")
             it_kb_text = format_it_kb_for_prompt(pack.it_hits)
             it_kb_used = len(pack.it_hits) > 0
@@ -371,7 +620,7 @@ def _render_ask_ai_tab(df: pd.DataFrame, retriever: TfidfRetriever, path_str: st
         if use_chat_llm and chat_api_key.strip():
             try:
                 with st.spinner("Generating reply…"):
-                    reply = openai_multisource_answer(
+                    rag_reply = openai_multisource_answer(
                         api_key=chat_api_key.strip(),
                         model=chat_model.strip() or "gpt-4o-mini",
                         user_query=prompt,
@@ -382,41 +631,65 @@ def _render_ask_ai_tab(df: pd.DataFrame, retriever: TfidfRetriever, path_str: st
                         wikipedia_block=wiki_for_llm,
                     )
                     if wiki_md:
-                        reply = append_wikipedia_to_answer(reply, wiki_md)
+                        rag_reply = append_wikipedia_to_answer(rag_reply, wiki_md)
             except Exception as ex:
-                reply = (
+                rag_reply = (
                     f"**OpenAI error:** `{ex}`\n\n---\n\n"
                     + offline_multisource_answer(
-                        df,
-                        pack.row_idx,
-                        pack.case_id,
-                        grounded,
-                        pack.method,
-                        pack.audit_score,
-                        pack.audit_weak,
-                        pack.it_hits,
-                        user_query=prompt,
-                        wiki_md=wiki_md,
+                        df, pack.row_idx, pack.case_id, grounded,
+                        pack.method, pack.audit_score, pack.audit_weak,
+                        pack.it_hits, user_query=prompt, wiki_md=wiki_md,
                     )
                 )
         else:
-            reply = offline_multisource_answer(
-                df,
-                pack.row_idx,
-                pack.case_id,
-                grounded,
-                pack.method,
-                pack.audit_score,
-                pack.audit_weak,
-                pack.it_hits,
-                user_query=prompt,
-                wiki_md=wiki_md,
+            rag_reply = offline_multisource_answer(
+                df, pack.row_idx, pack.case_id, grounded,
+                pack.method, pack.audit_score, pack.audit_weak,
+                pack.it_hits, user_query=prompt, wiki_md=wiki_md,
             )
             if use_chat_llm and not chat_api_key.strip():
-                reply += "\n\n*Enable OpenAI by adding an API key above.*"
+                rag_reply += "\n\n*Enable OpenAI by adding an API key above.*"
+
+        # ── Hallucinated answer (offline simulation) ──────────────────
+        hal_answer, fabrications = _simulate_hallucinated_answer(prompt)
+        hal_prefix = (
+            "**⚠️ UNGROUNDED ANSWER — hallucinations likely**\n\n"
+            "*This is a simulated ungrounded response for educational comparison.*\n\n"
+        )
+        hal_display = hal_prefix + hal_answer
+        hal_suffix = (
+            "\n\n---\n**Fabricated elements in this answer:**\n"
+            + "\n".join(f"- {f}" for f in fabrications)
+            + "\n\n*Switch to RAG-Grounded mode for a verified answer.*"
+        )
+
+        # ── Store comparison for side-by-side view ────────────────────
+        hits_for_cmp = retriever.query(prompt, top_k=3)
+        ctx_texts = [h.model_response_excerpt for h in hits_for_cmp]
+        faithfulness = _estimate_faithfulness(rag_reply, ctx_texts)
+        st.session_state["last_comparison"] = {
+            "query": prompt,
+            "hallucinated_answer": hal_answer,
+            "hallucinated_fabrications": fabrications,
+            "rag_answer": rag_reply,
+            "hit_evidence": [{"case_id": h.case_id, "score": h.score}
+                             for h in hits_for_cmp],
+            "faithfulness": faithfulness,
+        }
+
+        # ── Generate related questions ────────────────────────────────
+        st.session_state["related_questions"] = _generate_related_questions(
+            prompt, hits_for_cmp, kb_hit
+        )
+
+        # ── Decide what goes into chat based on mode ──────────────────
+        if use_rag:
+            display_reply = rag_reply
+        else:
+            display_reply = hal_display + hal_suffix
 
         st.session_state.ask_ai_messages.append({"role": "user", "content": prompt})
-        st.session_state.ask_ai_messages.append({"role": "assistant", "content": reply})
+        st.session_state.ask_ai_messages.append({"role": "assistant", "content": display_reply})
         st.session_state["ask_ai_plot"] = {"q": prompt}
         st.rerun()
 
@@ -516,7 +789,8 @@ def main() -> None:
 
     render_pedagogy_hallucination_lab(df, retriever)
 
-    tab_overview, tab_analysis, tab_case, tab_live, tab_ask_ai, tab_advanced, tab_concepts = st.tabs(
+    (tab_overview, tab_analysis, tab_case, tab_live,
+     tab_ask_ai, tab_advanced, tab_concepts, tab_animations) = st.tabs(
         [
             "Overview & corpus",
             "Analysis & 3D embedding",
@@ -525,6 +799,7 @@ def main() -> None:
             "Ask AI",
             "Advanced: hybrid + LLM",
             "Concepts & checklist",
+            "3D Animations",
         ]
     )
 
@@ -681,6 +956,81 @@ def main() -> None:
                 "- If clusters overlap in 3D but retrieval margins stay high, the discarded dimensions still "
                 "carry discriminative signal — a reason production RAG uses **high-dimensional** vectors."
             )
+
+        # ── Area 4: Deeper Analysis Panel ────────────────────────────────
+        st.divider()
+        st.subheader("Area 4 — Deeper Retrieval Quality Analysis")
+
+        # 4A: Retrieval confidence gauge for the q3d query
+        if q3d.strip() and hits3d:
+            margin_data = retriever.retrieval_margin(q3d.strip())
+            margin_val = margin_data.get("margin", 0.0)
+            entropy_val = margin_data.get("entropy_bits", 0.0)
+            if margin_val >= 0.15:
+                conf_label, conf_color = "HIGH", "normal"
+            elif margin_val >= 0.05:
+                conf_label, conf_color = "MEDIUM", "off"
+            else:
+                conf_label, conf_color = "LOW", "inverse"
+
+            g1, g2, g3, g4 = st.columns(4)
+            g1.metric("Retrieval Margin (top1−top2)", f"{margin_val:.4f}")
+            g2.metric("Shannon Entropy (bits)", f"{entropy_val:.2f}")
+            g3.metric("Confidence", conf_label, delta_color=conf_color)
+            g4.metric("Chunks searched", margin_data.get("n", 0))
+
+            st.markdown("##### 4A — Retrieval Confidence Gauge")
+            st.caption(
+                "Green zone (margin > 0.15) = unambiguous top hit. "
+                "Orange (0.05–0.15) = moderate confidence. Red (< 0.05) = very low discrimination."
+            )
+            st.plotly_chart(
+                figure_retrieval_gauge(margin_val, entropy_val, template=tpl),
+                use_container_width=True,
+            )
+        else:
+            st.info("Enter a query in the text box above to see the Retrieval Confidence Gauge.")
+
+        # 4B: Faithfulness estimator for the last Ask AI answer
+        st.markdown("##### 4B — Offline Faithfulness Estimator")
+        last_cmp = st.session_state.get("last_comparison")
+        if last_cmp:
+            faith = last_cmp.get("faithfulness", 0.0)
+            st.caption(
+                f"Last Ask AI query: *{last_cmp.get('query', '—')}*  \n"
+                "Faithfulness = fraction of answer word-tokens also present in the retrieved context. "
+                "This is a **keyword-overlap proxy** (not a full LLM-based faithfulness check)."
+            )
+            st.progress(faith, text=f"Estimated Faithfulness: {faith:.1%}")
+            with st.expander("What does faithfulness mean?", expanded=False):
+                st.markdown(
+                    "**Faithfulness** (RAGAS metric) measures whether every claim in the generated "
+                    "answer is supported by the retrieved context.\n\n"
+                    "- **1.0** = every answer word appears in retrieved chunks (maximally grounded).\n"
+                    "- **0.0** = no overlap (answer is entirely outside the retrieved context).\n\n"
+                    "Limitations of this proxy: it ignores word order, semantics, and sentence-level "
+                    "entailment. Production systems use an LLM-as-judge to verify each claim."
+                )
+        else:
+            st.caption("Ask a question in the **Ask AI** tab first — faithfulness score will appear here.")
+
+        # 4C: Clustered similarity heatmap with category coloured labels
+        st.markdown("##### 4C — Similarity Heatmap (category-ordered)")
+        st.caption("Rows/columns reordered by alignment category so within-group similarity clusters are visible.")
+        cat_order = df.sort_values("category")["case_id"].astype(str).tolist()
+        cat_labels_sorted = [f"{df.loc[df['case_id']==c,'category'].values[0][:1]}:{c}"
+                             for c in cat_order]
+        idx_map = {cid: i for i, cid in enumerate(df["case_id"].astype(str).tolist())}
+        reorder = [idx_map[c] for c in cat_order if c in idx_map]
+        sim_reordered = sim_full[np.ix_(reorder, reorder)]
+        st.plotly_chart(
+            figure_similarity_heatmap(
+                sim_reordered, cat_labels_sorted,
+                title="Chunk–chunk cosine (sorted by category: B=Bias, H=Helpfulness, O=Honesty, S=Safety)",
+                template=tpl,
+            ),
+            use_container_width=True,
+        )
 
     # ----- Case lab -----
     with tab_case:
@@ -1090,10 +1440,129 @@ def main() -> None:
         st.subheader("Optional upgrades (implemented)")
         st.markdown(
             "- **Ask AI** tab: audit + **IT KB** (SQLite) + optional OpenAI; weak audit match still returns IT-focused answers.\n"
+            "- **RAG vs Normal toggle** in Ask AI: compare grounded vs simulated hallucinated answers side-by-side.\n"
+            "- **Hallucination KB**: 21-entry expert Q&A auto-surfaced when query matches hallucination topics.\n"
+            "- **3D Animations** tab: animated chunking pipeline, retrieval similarity search, and hallucination timeline.\n"
             "- **Semantic retrieval** + **hybrid BM25+dense** + **RRF** — see tab **Advanced: hybrid + LLM**.\n"
             "- **Sentence attributions** on the retrieved row (prompt + `model_response`).\n"
             "- **OpenAI** optional: strict system prompt; answers only from `RETRIEVED_CONTEXT` + instructor notes."
         )
+
+    # ----- 3D Animations -----
+    with tab_animations:
+        st.subheader("3D Animated Visualizations — RAG Pipeline & Hallucination")
+        st.markdown(
+            "Three animated Plotly charts that walk through the RAG pipeline and hallucination landscape. "
+            "Press **▶ Play** on each chart or drag the slider to step through stages manually."
+        )
+
+        # ── 3A: Animated Chunking Pipeline ───────────────────────────────
+        st.markdown("#### 3A — Chunking Pipeline Animation")
+        st.caption(
+            "Watch a raw document split into chunks, get projected into vector space, and be indexed "
+            "in a vector store. Each dot = one chunk; connecting lines show the index structure."
+        )
+        try:
+            from rag_pipeline import build_chunks as _build_chunks
+            _chunks_list, _ = _build_chunks(df)
+            fig_chunk_anim = figure_chunking_animation(_chunks_list)
+            st.plotly_chart(fig_chunk_anim, use_container_width=True)
+        except Exception as _e:
+            st.warning(f"Chunking animation unavailable: {_e}")
+
+        with st.expander("What this animation shows", expanded=False):
+            st.markdown(
+                "- **Stage 1 (Raw document)**: the full text corpus is one un-split blob.\n"
+                "- **Stage 2 (Splitting)**: text is divided into fixed-size/semantic chunks — each gets its own slot.\n"
+                "- **Stage 3 (Embedding)**: each chunk is converted to a vector (here: TF-IDF); dots drift to "
+                "their positions in vector space.\n"
+                "- **Stage 4 (Indexed)**: the vector store links every embedded chunk to the central index, "
+                "ready for cosine-similarity retrieval at query time."
+            )
+
+        st.divider()
+
+        # ── 3B: Animated Retrieval Search ────────────────────────────────
+        st.markdown("#### 3B — Similarity Search Animation")
+        st.caption(
+            "Enter a query to see how the retriever places it in LSA space, fires cosine-similarity "
+            "rays to all chunks, then highlights the top-k retrieved results."
+        )
+        anim_query = st.text_input(
+            "Query for retrieval animation",
+            value="What is hallucination in LLMs?",
+            key="anim_q",
+            help="Try different queries to see how the query dot moves and which chunks it lights up.",
+        )
+        anim_k = st.slider("Top‑k to highlight", 1, min(8, len(df)), 3, key="anim_k")
+
+        if anim_query.strip():
+            try:
+                chunk_xyz_a, q_xyz_a, _, _ = retriever.lsa_3d_layout(query=anim_query.strip())
+                all_sims_a = retriever.similarity_distribution(anim_query.strip())
+                hits_a = retriever.query(anim_query.strip(), top_k=anim_k)
+                top_idx_a = [h.chunk_index for h in hits_a]
+                cats_a = df["category"].astype(str).tolist()
+                labels_a = df["case_id"].astype(str).tolist()
+                fig_ret_anim = figure_retrieval_animation(
+                    chunk_xyz_a, all_sims_a, q_xyz_a, top_idx_a, labels_a, cats_a
+                )
+                st.plotly_chart(fig_ret_anim, use_container_width=True)
+                if hits_a:
+                    st.markdown("**Top retrieved chunks:**")
+                    st.dataframe(
+                        pd.DataFrame([
+                            {"rank": i + 1, "case_id": h.case_id,
+                             "cosine": round(h.score, 4), "category": h.category}
+                            for i, h in enumerate(hits_a)
+                        ]),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+            except Exception as _e:
+                st.warning(f"Retrieval animation unavailable: {_e}")
+        else:
+            st.info("Enter a query above to start the retrieval animation.")
+
+        with st.expander("What this animation shows", expanded=False):
+            st.markdown(
+                "- **Stage 1**: all chunks shown in their category colours at LSA 3D positions.\n"
+                "- **Stage 2**: the query vector is placed in the same space (red diamond).\n"
+                "- **Stage 3**: cosine-similarity rays fire from the query to every chunk — "
+                "opacity encodes the similarity score (bright = high match).\n"
+                "- **Stage 4**: top-k retrieved chunks turn **gold** and enlarge; "
+                "non-retrieved chunks fade out."
+            )
+
+        st.divider()
+
+        # ── 3C: Hallucination Rate Timeline ──────────────────────────────
+        st.markdown("#### 3C — Hallucination Rate Timeline (Illustrative)")
+        st.caption(
+            "Animated bar race showing approximate hallucination rates across model generations. "
+            "Numbers are **illustrative** for classroom discussion — not peer-reviewed benchmarks. "
+            "Green bars = RAG-augmented; orange/red = base models."
+        )
+        try:
+            fig_hal_tl = figure_hallucination_timeline()
+            st.plotly_chart(fig_hal_tl, use_container_width=True)
+        except Exception as _e:
+            st.warning(f"Timeline animation unavailable: {_e}")
+
+        st.info(
+            "**Key insight:** RAG-augmented models (green) show dramatically lower hallucination "
+            "rates than base models because retrieval grounds generation in verified text. "
+            "The blue dotted line marks where RAG was introduced as a standard technique (~2020)."
+        )
+
+        with st.expander("Discussion questions for class", expanded=False):
+            st.markdown(
+                "1. Why does hallucination rate drop between GPT-2 and InstructGPT even without RAG?\n"
+                "2. What does the remaining ~4–7% hallucination rate in RAG systems come from?\n"
+                "3. At what point does the ROI on further reducing hallucination diminish? "
+                "(Consider cost of retrieval infrastructure vs. benefit of higher faithfulness.)\n"
+                "4. How would you measure hallucination rate in a real deployment? What dataset would you use?"
+            )
 
 
 if __name__ == "__main__":
